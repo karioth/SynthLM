@@ -21,6 +21,9 @@ This note captures the current state of the repo, key scripts, and known gotchas
 - VAE is passed via `--vae`:
   - If checkpoint lacks `config`, `load_vae` uses `AutoencoderKL` (KL-16 style).
   - If checkpoint has `config`, `load_vae` uses `sigma_vae`.
+- Optional cached latents:
+  - Generate with `data_utils/cache_imagenet.py` into `--cached_path`.
+  - Train with `--use_cached --cached_path ...` (ImageFolder only; no HF dataset).
 - `train_hf.py` computes `scaling_factor` and `bias_factor` from latents and saves them in `other_state.pth`.
 - Sampling/eval must read that `other_state.pth` for correct decoding.
 

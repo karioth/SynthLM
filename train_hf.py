@@ -25,6 +25,8 @@ from models import All_models, DiT, Transformer, EMAModel
 from timm.models import create_model
 from utils import center_crop_arr, safe_blob_write, load_vae
 from schedule import DDPMScheduler, FlowMatchingScheduler
+from data_utils import CachedImageFolder
+from tokenizer_models.vae import DiagonalGaussianDistribution
 
 import wandb
 
@@ -44,6 +46,8 @@ def parse_args():
     parser.add_argument("--dataset_name", type=str, default=None, help="The name of the Dataset (from the HuggingFace hub) to train on.")  
     parser.add_argument("--dataset_config_name", type=str, default=None, help="The config of the Dataset, leave as None if there's only one config.")  
     parser.add_argument("--train_data_dir", type=str, default="/tmp/ILSVRC/Data/CLS-LOC/train", help="A folder containing the training data.")  
+    parser.add_argument("--use_cached", action="store_true", help="Use cached VAE moments instead of images.")
+    parser.add_argument("--cached_path", type=str, default=None, help="Path to cached VAE moments.")
       
     # 模型参数  
     parser.add_argument("--model", type=str, default="Transformer-L", help="The config of the UNet model to train.")  
@@ -99,6 +103,11 @@ def parse_args():
         args.local_rank = env_local_rank  
     if args.dataset_name is None and args.train_data_dir is None:  
         raise ValueError("You must specify either a dataset name from the hub or a train data directory.")  
+    if args.use_cached:
+        if args.dataset_name is not None:
+            raise ValueError("--use_cached only supports ImageFolder datasets (no --dataset_name).")
+        if args.cached_path is None:
+            raise ValueError("--use_cached requires --cached_path.")
       
     return args  
 
@@ -190,7 +199,9 @@ def main(args):
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5], inplace=True)
     ])
-    if args.dataset_name is not None:
+    if args.use_cached:
+        dataset = CachedImageFolder(args.cached_path)
+    elif args.dataset_name is not None:
         dataset = load_dataset(
             args.dataset_name,
             args.dataset_config_name,
@@ -280,7 +291,10 @@ def main(args):
                     continue
                 
             with torch.no_grad():
-                vae_latent = vae.encode(clean_images)
+                if args.use_cached:
+                    vae_latent = DiagonalGaussianDistribution(clean_images)
+                else:
+                    vae_latent = vae.encode(clean_images)
                 clean_images = vae_latent.sample()
                 mode_images = vae_latent.mode()
                 if scaling_factor is None:
