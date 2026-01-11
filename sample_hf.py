@@ -8,7 +8,7 @@ from torchvision.utils import save_image
 from accelerate.utils import set_seed
 
 from safetensors.torch import load_file 
-from tokenizer_models import AutoencoderKL, load_vae
+from utils import load_vae
 
 from schedule.dpm_solver import DPMSolverMultistepScheduler
 from models import All_models
@@ -111,6 +111,7 @@ def main(args):
     noise_scheduler = DPMSolverMultistepScheduler(num_train_timesteps=args.ddpm_num_steps, beta_schedule=args.ddpm_beta_schedule, prediction_type=args.prediction_type)
 
     model.eval()
+    vae = vae.to(device).to(dtype)
     vae.eval()
     # Potentially load in the weights and states from a previous save
     if args.checkpoint:

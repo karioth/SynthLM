@@ -56,7 +56,7 @@ def parse_args():
     parser.add_argument("--batch_size", type=int, default=32, help="Batch size (per device) for the training dataloader.")  
     parser.add_argument("--num_epochs", type=int, default=100, help="Number of epochs to train for.")  
     parser.add_argument("--gradient_accumulation_steps", type=int, default=1, help="Number of updates steps to accumulate before performing a backward/update pass.")  
-    parser.add_argument("--dataloader_num_workers", type=int, default=2, help="The number of subprocesses to use for data loading.")  
+    parser.add_argument("--dataloader_num_workers", type=int, default=4, help="The number of subprocesses to use for data loading.")  
       
     # 优化器参数  
     parser.add_argument("--learning_rate", type=float, default=1e-4, help="Initial learning rate (after the potential warmup period) to use.")  

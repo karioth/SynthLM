@@ -1,1 +1,23 @@
-vae_ckpt/*
+# Python
+__pycache__/
+*.py[cod]
+
+# Artifacts/checkpoints
+*.pt
+*.ckpt
+*.npz
+
+# Logs
+*.out
+*.err
+*.sh
+lightning_logs/
+wandb/
+logs/
+visuals/
+
+# Experiment outputs
+results*/
+samples*/
+pretrained_models/
+commands.md
