@@ -12,7 +12,7 @@ from timm.models import create_model
 from safetensors.torch import load_file 
 from tokenizer_models import AutoencoderKL, load_vae
 
-from schedule.dpm_solver import DPMSolverMultistepScheduler
+from schedule import DPMSolverMultistepScheduler, FlowMatchingScheduler
 from models import All_models
 
 imagenet_indices = [
@@ -80,7 +80,7 @@ def parse_args():
     )
     parser.add_argument("--use_ema", action="store_true", help="Whether to use Exponential Moving Average for the final model weights.")  
     parser.add_argument("--ddpm_num_steps", type=int, default=1000)
-    parser.add_argument("--ddpm_num_inference_steps", type=int, default=250)
+    parser.add_argument("--num_inference_steps", type=int, default=250)
     parser.add_argument("--ddpm_beta_schedule", type=str, default="cosine", help="The beta schedule to use for DDPM.") 
     parser.add_argument("--cfg-scale", type=float, default=4.0)
     parser.add_argument(
@@ -117,7 +117,10 @@ def main(args):
         flatten_input=flatten_input,
     ).to(device).to(dtype)
     # Initialize the scheduler
-    noise_scheduler = DPMSolverMultistepScheduler(num_train_timesteps=args.ddpm_num_steps, beta_schedule=args.ddpm_beta_schedule, prediction_type=args.prediction_type)
+    if args.prediction_type == "flow":
+        noise_scheduler = FlowMatchingScheduler(num_train_timesteps=args.ddpm_num_steps, prediction_type=args.prediction_type)
+    else:
+        noise_scheduler = DPMSolverMultistepScheduler(num_train_timesteps=args.ddpm_num_steps, beta_schedule=args.ddpm_beta_schedule, prediction_type=args.prediction_type)
 
     model.eval()
     vae.eval()
@@ -146,9 +149,11 @@ def main(args):
     image_id = 0
     for _ in tqdm(range(5)):
         def p_sample(model, image):
-            noise_scheduler.set_timesteps(args.ddpm_num_inference_steps)
-            for t in noise_scheduler.timesteps:
-                model_output = model(image, t.repeat(image.shape[0]).to(image))
+            noise_scheduler.set_timesteps(args.num_inference_steps)
+            timesteps = noise_scheduler.timesteps
+            timesteps_model = timesteps * 1000.0 if args.prediction_type == "flow" else timesteps
+            for t, t_model in zip(timesteps, timesteps_model):
+                model_output = model(image, t_model.repeat(image.shape[0]).to(image))
                 image = noise_scheduler.step(model_output, t, image).prev_sample
             return image
 

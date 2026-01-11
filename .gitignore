@@ -14,10 +14,13 @@ __pycache__/
 lightning_logs/
 wandb/
 logs/
-visuals/
 
 # Experiment outputs
 results*/
 samples*/
 pretrained_models/
-commands.md
+visuals*/
+
+# Docs
+*.md
+!README.md

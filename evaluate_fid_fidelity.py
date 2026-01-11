@@ -50,7 +50,7 @@ def parse_args():
     )
     parser.add_argument("--use_ema", action="store_true", help="Whether to use Exponential Moving Average for the final model weights.")  
     parser.add_argument("--ddpm_num_steps", type=int, default=1000)
-    parser.add_argument("--ddpm_num_inference_steps", type=int, default=250)
+    parser.add_argument("--num_inference_steps", type=int, default=250)
     parser.add_argument("--ddpm_beta_schedule", type=str, default="cosine", help="The beta schedule to use for DDPM.")
     parser.add_argument("--prediction_type", type=str, default="epsilon", help="Whether the model should predict the 'epsilon'/noise error or directly the reconstructed image 'x0'.")
     parser.add_argument("--cfg-scale", type=float, default=4.0)
@@ -92,7 +92,7 @@ class RefImageDataset(torch.utils.data.Dataset):
 @torch.no_grad()
 def main(args):
     prefix = "ema" if args.use_ema else "standard"
-    exp_name = f"{prefix}_{args.steps_per_class}_{args.cfg_scale}_{args.ddpm_beta_schedule}_{args.ddpm_num_inference_steps}"
+    exp_name = f"{prefix}_{args.steps_per_class}_{args.cfg_scale}_{args.ddpm_beta_schedule}_{args.num_inference_steps}"
     print(f"Exp_name {exp_name}")
     image_path = os.path.join(args.checkpoint, f"images_{exp_name}.npz")
     print(f"Computing fidelity metrics from {image_path}...")

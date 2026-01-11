@@ -12,7 +12,7 @@ from accelerate.utils import set_seed
 from safetensors.torch import load_file 
 from tokenizer_models import AutoencoderKL, load_vae
 
-from schedule.dpm_solver import DPMSolverMultistepScheduler
+from schedule import DPMSolverMultistepScheduler, FlowMatchingScheduler
 from models import All_models
 from utils import safe_blob_dump
 from metrics import compute_fid_without_store, compute_inception_score_from_tensor
@@ -82,7 +82,7 @@ def parse_args():
     parser.add_argument("--force_diffusion", action="store_true", help="Whether to force the use of diffusion models.")  
     parser.add_argument("--use_ema", action="store_true", help="Whether to use Exponential Moving Average for the final model weights.")  
     parser.add_argument("--ddpm_num_steps", type=int, default=1000)
-    parser.add_argument("--ddpm_num_inference_steps", type=int, default=250)
+    parser.add_argument("--num_inference_steps", type=int, default=250)
     parser.add_argument("--ddpm_beta_schedule", type=str, default="cosine", help="The beta schedule to use for DDPM.")
     parser.add_argument("--prediction_type", type=str, default="epsilon", help="Whether the model should predict the 'epsilon'/noise error or directly the reconstructed image 'x0'.")
     parser.add_argument("--cfg-scale", type=float, default=4.0)
@@ -118,7 +118,7 @@ def main(args):
     else:
         dtype = torch.float32
     prefix = "ema" if args.use_ema else "standard"
-    exp_name = f"{prefix}_{args.steps_per_class}_{args.cfg_scale}_{args.ddpm_beta_schedule}_{args.ddpm_num_inference_steps}"
+    exp_name = f"{prefix}_{args.steps_per_class}_{args.cfg_scale}_{args.ddpm_beta_schedule}_{args.num_inference_steps}"
     print(f"Exp_name {exp_name}")
     vae, input_size, latent_size, flatten_input = load_vae(args.vae, args.image_size)
         
@@ -139,7 +139,10 @@ def main(args):
             num_classes=args.num_classes,
             flatten_input=flatten_input,
         ).to(device).to(dtype)
-        noise_scheduler = DPMSolverMultistepScheduler(num_train_timesteps=args.ddpm_num_steps, beta_schedule=args.ddpm_beta_schedule, prediction_type=args.prediction_type)
+        if args.prediction_type == "flow":
+            noise_scheduler = FlowMatchingScheduler(num_train_timesteps=args.ddpm_num_steps, prediction_type=args.prediction_type)
+        else:
+            noise_scheduler = DPMSolverMultistepScheduler(num_train_timesteps=args.ddpm_num_steps, beta_schedule=args.ddpm_beta_schedule, prediction_type=args.prediction_type)
         model.eval()
         if args.checkpoint:
             if args.use_ema and other_state["ema"] is not None:
@@ -157,9 +160,11 @@ def main(args):
                 print(f"Loaded model from checkpoint {args.checkpoint}.")
 
         def p_sample(model, image):
-            noise_scheduler.set_timesteps(args.ddpm_num_inference_steps)
-            for t in noise_scheduler.timesteps:
-                model_output = model(image, t.repeat(image.shape[0]).to(image))
+            noise_scheduler.set_timesteps(args.num_inference_steps)
+            timesteps = noise_scheduler.timesteps
+            timesteps_model = timesteps * 1000.0 if args.prediction_type == "flow" else timesteps
+            for t, t_model in zip(timesteps, timesteps_model):
+                model_output = model(image, t_model.repeat(image.shape[0]).to(image))
                 image = noise_scheduler.step(model_output, t, image).prev_sample
             return image
 

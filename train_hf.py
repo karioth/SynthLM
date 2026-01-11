@@ -24,7 +24,7 @@ from diffusers.optimization import get_scheduler
 from models import All_models, DiT, Transformer, EMAModel
 from timm.models import create_model
 from utils import center_crop_arr, safe_blob_write, load_vae
-from schedule.ddpm import DDPMScheduler
+from schedule import DDPMScheduler, FlowMatchingScheduler
 
 import wandb
 
@@ -86,9 +86,9 @@ def parse_args():
     # DDPM参数  
     parser.add_argument("--prediction_type", type=str, default="epsilon", help="Whether the model should predict the 'epsilon'/noise error or directly the reconstructed image 'x0'.")  
     parser.add_argument("--ddpm_num_steps", type=int, default=1000, help="The number of steps to use for DDPM.")  
-    parser.add_argument("--ddpm_num_inference_steps", type=int, default=1000, help="The number of inference steps to use for DDPM.")
+    parser.add_argument("--num_inference_steps", type=int, default=1000, help="The number of inference steps to use.")
     parser.add_argument("--ddpm_beta_schedule", type=str, default="cosine", help="The beta schedule to use for DDPM.") 
-    parser.add_argument("--ddpm_batch_mul", type=int, default=4, help="The batch multiplier to use for DDPM.")  
+    parser.add_argument("--batch_mul", type=int, default=4, help="The batch multiplier for per-token training.")  
     parser.add_argument("--checkpointing_steps", type=int, default=5000, help="Save a checkpoint of the training state every X updates.")  
     parser.add_argument("--checkpoint", type=str, default=None, help="Resume training from a previous checkpoint.")  
       
@@ -134,7 +134,10 @@ def main(args):
             power=args.ema_power,
         )
     # Initialize the scheduler
-    noise_scheduler = DDPMScheduler(num_train_timesteps=args.ddpm_num_steps, beta_schedule=args.ddpm_beta_schedule, prediction_type=args.prediction_type)
+    if args.prediction_type == "flow":
+        noise_scheduler = FlowMatchingScheduler(num_train_timesteps=args.ddpm_num_steps, prediction_type=args.prediction_type)
+    else:
+        noise_scheduler = DDPMScheduler(num_train_timesteps=args.ddpm_num_steps, beta_schedule=args.ddpm_beta_schedule, prediction_type=args.prediction_type)
 
     # Initialize the optimizer
     optimizer = torch.optim.AdamW(
@@ -293,26 +296,37 @@ def main(args):
 
             with accelerator.accumulate(model):
                 bsz, latent_size, h, w = clean_images.shape
+                is_flow = args.prediction_type == "flow"
                 if isinstance(model.module, Transformer):
-                    noise = torch.randn((bsz * args.ddpm_batch_mul * h * w, latent_size), device=clean_images.device, dtype=clean_images.dtype)
-                    timesteps = torch.multinomial(sample_weight, bsz * args.ddpm_batch_mul * h * w, replacement=True)
-                    clean_images_repeated = clean_images.repeat_interleave(args.ddpm_batch_mul, dim=0).permute(0, 2, 3, 1).reshape(-1, clean_images.shape[1])
+                    noise = torch.randn((bsz * args.batch_mul * h * w, latent_size), device=clean_images.device, dtype=clean_images.dtype)
+                    if is_flow:
+                        timesteps = torch.rand(bsz * args.batch_mul * h * w, device=clean_images.device, dtype=clean_images.dtype)
+                    else:
+                        timesteps = torch.multinomial(sample_weight, bsz * args.batch_mul * h * w, replacement=True)
+                    clean_images_repeated = clean_images.repeat_interleave(args.batch_mul, dim=0).permute(0, 2, 3, 1).reshape(-1, clean_images.shape[1])
                     noisy_images = noise_scheduler.add_noise(clean_images_repeated, noise, timesteps)
                     velocity = noise_scheduler.get_velocity(clean_images_repeated, noise, timesteps)
-                    noisy_images, noise, velocity = [x.reshape(bsz * args.ddpm_batch_mul, h, w, latent_size).permute(0, 3, 1, 2) for x in [noisy_images, noise, velocity]]
-                    timesteps = timesteps.reshape(bsz * args.ddpm_batch_mul, h * w)
-                    model_output = model(noisy_images.to(dtype), timesteps.to(dtype), x_start=clean_images.to(dtype), y=label, batch_mul=args.ddpm_batch_mul)
+                    noisy_images, noise, velocity = [x.reshape(bsz * args.batch_mul, h, w, latent_size).permute(0, 3, 1, 2) for x in [noisy_images, noise, velocity]]
+                    timesteps = timesteps.reshape(bsz * args.batch_mul, h * w)
+                    timesteps_model = timesteps * 1000.0 if is_flow else timesteps # scaled to ddpm size for timestep embedder, so sinusoidals are well behaved
+                    model_output = model(noisy_images.to(dtype), timesteps_model.to(dtype), x_start=clean_images.to(dtype), y=label, batch_mul=args.batch_mul)
                 elif isinstance(model.module, DiT):
                     noise = torch.randn_like(clean_images)
-                    timesteps = torch.multinomial(sample_weight, bsz, replacement=True)
+                    if is_flow:
+                        timesteps = torch.rand(bsz, device=clean_images.device, dtype=clean_images.dtype)
+                    else:
+                        timesteps = torch.multinomial(sample_weight, bsz, replacement=True)
                     noisy_images = noise_scheduler.add_noise(clean_images, noise, timesteps)
                     velocity = noise_scheduler.get_velocity(clean_images, noise, timesteps)
-                    model_output = model(noisy_images.to(dtype), timesteps.to(dtype), y=label)
+                    timesteps_model = timesteps * 1000.0 if is_flow else timesteps
+                    model_output = model(noisy_images.to(dtype), timesteps_model.to(dtype), y=label)
                 else:
                     raise NotImplementedError()
                 if args.prediction_type == "epsilon":
                     loss = F.mse_loss(model_output.float(), noise.float())
                 elif args.prediction_type == "v_prediction":
+                    loss = F.mse_loss(model_output.float(), velocity.float())
+                elif args.prediction_type == "flow":
                     loss = F.mse_loss(model_output.float(), velocity.float())
                 else:
                     raise NotImplementedError()

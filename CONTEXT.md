@@ -33,7 +33,7 @@ This note captures the current state of the repo, key scripts, and known gotchas
   - v_prediction and cosine beta schedule.
   - DPM-Solver with 20 steps at inference.
 - Scaling setup in paper uses different LR and larger batch (2048).
-- `ddpm_batch_mul` is repo-specific (Transformer only); not mentioned in paper.
+- `batch_mul` is repo-specific (Transformer only); not mentioned in paper.
 
 ## Class Conditioning / CFG
 - Class label dropout for CFG is enabled by default: `class_dropout_prob=0.1`.
@@ -53,6 +53,11 @@ This is the causal Transformer + diffusion head (next-token diffusion).
   - `forward_diffusion(x_noise, t, condition)` adds timestep embeddings to `condition`, runs MLP diffusion blocks, predicts noise or velocity.
 - Loss: MSE vs noise (epsilon) or vs velocity (v_prediction), depending on `--prediction_type`.
 
+### Flow Matching (Rectified Flow)
+- Uses the same diffusion head and model API; `--prediction_type flow` switches training/sampling behavior.
+- Training samples t ~ U(0,1) and targets velocity (noise - x0); the model sees `t * 1000` for embeddings.
+- Sampling uses Euler steps over descending timesteps in [1, 0); `--num_inference_steps` controls the step count.
+
 ### Inference (autoregressive sampling)
 - Generate tokens left-to-right.
 - For each token index `i`:
@@ -71,7 +76,7 @@ This is the causal Transformer + diffusion head (next-token diffusion).
 - `sample_hf.py` writes images to `visuals/` (create it if missing).
 - For tokenizer-analysis comparison, sample with:
   - `--prediction_type v_prediction`
-  - `--ddpm_num_inference_steps 20`
+  - `--num_inference_steps 20`
   - `--cfg-scale 2.5` or `3.0`
 - `evaluate_fid.py` requires `torchrun` and `dist.init_process_group`.
 
@@ -91,7 +96,7 @@ This is the causal Transformer + diffusion head (next-token diffusion).
 ## Notes on Performance
 - Transformer uses flash-attn2 if available; otherwise SDPA.
 - DiT uses SDPA only.
-- Training speed is sensitive to `ddpm_batch_mul` and dataloader workers.
+- Training speed is sensitive to `batch_mul` and dataloader workers.
 
 ## Paths in Commands
 - Many commands in `commands.md` use absolute paths under `/share/users/student/f/friverossego/LatentLM`.
