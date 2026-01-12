@@ -212,7 +212,13 @@ def main(args):
         dataset = ImageFolder(args.train_data_dir, transform=augmentations)
     
     train_dataloader = torch.utils.data.DataLoader(
-        dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.dataloader_num_workers
+        dataset,
+        batch_size=args.batch_size,
+        shuffle=True,
+        num_workers=args.dataloader_num_workers,
+        pin_memory=True,
+        persistent_workers=args.dataloader_num_workers > 0,
+        drop_last=True,
     )
     # Initialize the learning rate scheduler
     lr_scheduler = get_scheduler(

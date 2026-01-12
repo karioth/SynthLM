@@ -8,6 +8,8 @@ import logging
 import os
 import requests
 from tqdm import tqdm
+from lightning.pytorch.callbacks import WeightAveraging
+from torch.optim.swa_utils import get_ema_avg_fn
 from .tokenizer_models import AutoencoderKL, sigma_vae
 
 #################################################################################
@@ -125,3 +127,14 @@ def load_vae(vae_model_path, image_size):
         vae.load_state_dict(data["model"])
     
     return vae, input_size, latent_size, flatten_input
+
+
+class EMAWeightAveraging(WeightAveraging):
+    """
+    Matches Lightning's stable-doc example (starts after 100 optimizer steps).
+    """
+    def __init__(self):
+        super().__init__(avg_fn=get_ema_avg_fn(decay=0.9999))
+
+    def should_update(self, step_idx=None, epoch_idx=None):
+        return (step_idx is not None) and (step_idx >= 100)
