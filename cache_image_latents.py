@@ -4,6 +4,7 @@ import os
 import time
 
 import numpy as np
+import requests
 import torch
 import torch.backends.cudnn as cudnn
 import torchvision.transforms as transforms
@@ -14,6 +15,9 @@ from tqdm import tqdm
 from torch.utils.data import DataLoader, DistributedSampler
 
 from src.utils import center_crop_arr, load_vae
+
+DEFAULT_VAE_URL = "https://www.dropbox.com/scl/fi/hhmuvaiacrarfg28qxhwz/kl16.ckpt?rlkey=l44xipsezc8atcffdp4q7mwmh&dl=0"
+DEFAULT_VAE_REL_PATH = os.path.join("pretrained_models", "kl16.ckpt")
 
 
 class ImageFolderWithFilename(datasets.ImageFolder):
@@ -54,7 +58,7 @@ def get_args_parser():
     parser.add_argument("--image_size", default=256, type=int,
                         help="Input image size")
     parser.add_argument("--vae", default=None, type=str,
-                        help="Path to pre-trained VAE model")
+                        help="Path to pre-trained VAE model (defaults to pretrained_models/kl16.ckpt)")
     parser.add_argument("--data_dir", required=True, type=str,
                         help="ImageFolder split directory to cache (e.g., .../train)")
     parser.add_argument("--cached_path", default=None, type=str,
@@ -72,9 +76,36 @@ def get_args_parser():
     return parser
 
 
+def download_vae(target_path):
+    headers = {"user-agent": "Wget/1.16 (linux-gnu)"}
+    os.makedirs(os.path.dirname(target_path), exist_ok=True)
+    response = requests.get(DEFAULT_VAE_URL, stream=True, headers=headers)
+    response.raise_for_status()
+    print(f"Downloading KL-16 VAE to {target_path}...")
+    with open(target_path, "wb") as f:
+        for chunk in tqdm(response.iter_content(chunk_size=1024 * 1024), unit="MB", total=254):
+            if chunk:
+                f.write(chunk)
+
+
+def resolve_vae_path(args):
+    if args.vae:
+        return args.vae
+    default_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), DEFAULT_VAE_REL_PATH)
+    if os.path.exists(default_path):
+        print(f"Using default VAE: {default_path}")
+        return default_path
+    rank = int(os.environ.get("RANK", "0"))
+    if rank != 0:
+        while not os.path.exists(default_path):
+            time.sleep(1)
+        return default_path
+    download_vae(default_path)
+    return default_path
+
+
 def main(args):
-    if args.vae is None:
-        raise ValueError("--vae is required")
+    vae_path = resolve_vae_path(args)
 
     device = args.device
     distributed, rank, world_size = init_distributed_mode(device)
@@ -113,7 +144,7 @@ def main(args):
         shuffle=False,
     )
 
-    vae, _, _, _ = load_vae(args.vae, args.image_size)
+    vae, _, _, _ = load_vae(vae_path, args.image_size)
     vae.to(device)
     vae.eval()
 
