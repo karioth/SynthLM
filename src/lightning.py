@@ -25,10 +25,7 @@ class LitModule(L.LightningModule):
         lr: float = 1e-4,
         weight_decay: float = 0.01,
         lr_scheduler: str = "cosine",
-        lr_warmup_steps: int = 100,
-        adam_beta1: float = 0.9,
-        adam_beta2: float = 0.98,
-        adam_epsilon: float = 1e-8,
+        lr_warmup_steps: int = 1000,
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -58,31 +55,6 @@ class LitModule(L.LightningModule):
         self.register_buffer("bias_factor", torch.tensor(0.0, dtype=torch.float32))
         self.register_buffer("has_scaling", torch.tensor(False, dtype=torch.bool))
         self._inference_scheduler = None
-
-    def configure_optimizers(self):
-        optimizer = torch.optim.AdamW(
-            self.model.parameters(),
-            lr=self.hparams.lr,
-            betas=(self.hparams.adam_beta1, self.hparams.adam_beta2),
-            weight_decay=self.hparams.weight_decay,
-            eps=self.hparams.adam_epsilon,
-        )
-
-        num_training_steps = self.trainer.estimated_stepping_batches
-        num_warmup_steps = self.hparams.lr_warmup_steps * self.trainer.world_size
-        scheduler = get_scheduler(
-            self.hparams.lr_scheduler,
-            optimizer=optimizer,
-            num_warmup_steps=num_warmup_steps,
-            num_training_steps=num_training_steps,
-        )
-        return {
-            "optimizer": optimizer,
-            "lr_scheduler": {
-                "scheduler": scheduler,
-                "interval": "step",
-            },
-        }
 
     def training_step(self, batch, batch_idx):
         moments, labels = batch
@@ -264,3 +236,31 @@ class LitModule(L.LightningModule):
         if self.hparams.prediction_type in ("v_prediction", "flow"):
             return F.mse_loss(model_output.float(), velocity.float())
         raise NotImplementedError(f"Unsupported prediction_type: {self.hparams.prediction_type}")
+
+    def configure_optimizers(self):
+        decay, no_decay = [], []
+        for n, p in self.model.named_parameters():
+            if not p.requires_grad:
+                continue
+            if p.ndim == 1 or n.endswith(".bias"):
+                no_decay.append(p)   # RMSNorm/LN weights, biases, scalars
+            else:
+                decay.append(p)      # linear/conv weights, embedding matrices, etc.
+
+        optimizer = torch.optim.AdamW(
+            [{"params": decay, "weight_decay": self.hparams.weight_decay},
+            {"params": no_decay, "weight_decay": 0.0}],
+            lr=self.hparams.lr,
+        )
+
+        num_training_steps = self.trainer.estimated_stepping_batches
+        scheduler = get_scheduler(
+            self.hparams.lr_scheduler,
+            optimizer=optimizer,
+            num_warmup_steps=self.hparams.lr_warmup_steps,
+            num_training_steps=num_training_steps,
+        )
+        return {
+            "optimizer": optimizer,
+            "lr_scheduler": {"scheduler": scheduler, "interval": "step"},
+        }

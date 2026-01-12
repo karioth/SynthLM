@@ -39,9 +39,6 @@ def main(args):
         weight_decay=args.weight_decay,
         lr_scheduler=args.lr_scheduler,
         lr_warmup_steps=args.lr_warmup_steps,
-        adam_beta1=args.adam_beta1,
-        adam_beta2=args.adam_beta2,
-        adam_epsilon=args.adam_epsilon,
     )
 
     ckpt_dir = os.path.join(args.results_dir, "checkpoints")
@@ -104,12 +101,9 @@ if __name__ == "__main__":
     p.add_argument("--resume", type=str, default=None, help="Path to a checkpoint to resume training.")
 
     p.add_argument("--lr", type=float, default=1e-4)
-    p.add_argument("--weight-decay", type=float, default=0.1)
+    p.add_argument("--weight-decay", type=float, default=0.01)
     p.add_argument("--lr-scheduler", type=str, default="cosine")
-    p.add_argument("--lr-warmup-steps", type=int, default=100)
-    p.add_argument("--adam-beta1", type=float, default=0.9)
-    p.add_argument("--adam-beta2", type=float, default=0.98)
-    p.add_argument("--adam-epsilon", type=float, default=1e-8)
+    p.add_argument("--lr-warmup-steps", type=int, default=1000)
 
     p.add_argument(
         "--precision",

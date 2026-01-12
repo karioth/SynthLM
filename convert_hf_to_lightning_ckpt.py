@@ -34,9 +34,6 @@ def parse_args():
     parser.add_argument("--weight-decay", type=float, default=0.1)
     parser.add_argument("--lr-scheduler", type=str, default="cosine")
     parser.add_argument("--lr-warmup-steps", type=int, default=100)
-    parser.add_argument("--adam-beta1", type=float, default=0.9)
-    parser.add_argument("--adam-beta2", type=float, default=0.98)
-    parser.add_argument("--adam-epsilon", type=float, default=1e-8)
     parser.add_argument("--no-ema", action="store_true", help="Use raw model weights instead of EMA.")
     return parser.parse_args()
 
@@ -74,9 +71,6 @@ def main():
         weight_decay=args.weight_decay,
         lr_scheduler=args.lr_scheduler,
         lr_warmup_steps=args.lr_warmup_steps,
-        adam_beta1=args.adam_beta1,
-        adam_beta2=args.adam_beta2,
-        adam_epsilon=args.adam_epsilon,
     )
 
     if args.no_ema:
