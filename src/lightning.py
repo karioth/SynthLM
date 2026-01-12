@@ -6,7 +6,7 @@ import lightning as L
 from diffusers.optimization import get_scheduler
 
 from .models import All_models, DiT, Transformer
-from .schedule import DDPMScheduler, FlowMatchingScheduler
+from .schedule import DDPMScheduler, DPMSolverMultistepScheduler, FlowMatchingScheduler
 from .tokenizer_models.vae import DiagonalGaussianDistribution
 
 
@@ -57,6 +57,7 @@ class LitModule(L.LightningModule):
         self.register_buffer("scaling_factor", torch.tensor(1.0, dtype=torch.float32))
         self.register_buffer("bias_factor", torch.tensor(0.0, dtype=torch.float32))
         self.register_buffer("has_scaling", torch.tensor(False, dtype=torch.bool))
+        self._inference_scheduler = None
 
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(
@@ -136,10 +137,59 @@ class LitModule(L.LightningModule):
         scale = self.scaling_factor.to(dtype=x.dtype)
         return (x + bias) * scale
 
-    def _unnormalize(self, x: torch.Tensor) -> torch.Tensor:
+    def unnormalize_latents(self, x: torch.Tensor) -> torch.Tensor:
+        if not self.has_scaling.item():
+            raise RuntimeError("Scaling/bias not set; cannot unnormalize latents.")
         bias = self.bias_factor.to(dtype=x.dtype)
         scale = self.scaling_factor.to(dtype=x.dtype)
         return x / scale - bias
+
+    def _get_inference_scheduler(self):
+        if self._inference_scheduler is None:
+            if self.hparams.prediction_type == "flow":
+                self._inference_scheduler = FlowMatchingScheduler(
+                    num_train_timesteps=self.hparams.ddpm_num_steps,
+                    prediction_type=self.hparams.prediction_type,
+                )
+            else:
+                self._inference_scheduler = DPMSolverMultistepScheduler(
+                    num_train_timesteps=self.hparams.ddpm_num_steps,
+                    beta_schedule=self.hparams.ddpm_beta_schedule,
+                    prediction_type=self.hparams.prediction_type,
+                )
+        return self._inference_scheduler
+
+    @torch.no_grad()
+    def sample_latents(
+        self,
+        class_labels,
+        cfg_scale: float = 4.0,
+        num_inference_steps: int = 250,
+        scheduler=None,
+    ):
+        self.eval()
+        if scheduler is None:
+            scheduler = self._get_inference_scheduler()
+
+        if not torch.is_tensor(class_labels):
+            class_labels = torch.tensor(class_labels, device=self.device, dtype=torch.long)
+        else:
+            class_labels = class_labels.to(device=self.device, dtype=torch.long)
+
+        y_null = torch.full_like(class_labels, self.hparams.num_classes, device=self.device)
+        y = torch.cat([class_labels, y_null], 0)
+
+        def p_sample(model, image):
+            scheduler.set_timesteps(num_inference_steps)
+            timesteps = scheduler.timesteps
+            timesteps_model = timesteps * 1000.0 if self.hparams.prediction_type == "flow" else timesteps
+            for t, t_model in zip(timesteps, timesteps_model):
+                model_output = model(image, t_model.repeat(image.shape[0]).to(image))
+                image = scheduler.step(model_output, t, image).prev_sample
+            return image
+
+        latents = self.model.sample_with_cfg(y, cfg_scale, p_sample)
+        return self.unnormalize_latents(latents)
 
     def _loss_transformer(self, x0, labels):
         bsz, latent_size, h, w = x0.shape
