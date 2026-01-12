@@ -43,7 +43,6 @@ class LitModule(L.LightningModule):
         self.register_buffer("scaling_factor", torch.tensor(1.0, dtype=torch.float32))
         self.register_buffer("bias_factor", torch.tensor(0.0, dtype=torch.float32))
         self.register_buffer("has_scaling", torch.tensor(False, dtype=torch.bool))
-        self._inference_scheduler = None
 
     def training_step(self, batch, batch_idx):
         moments, labels = batch
@@ -105,14 +104,7 @@ class LitModule(L.LightningModule):
         scale = self.scaling_factor.to(dtype=x.dtype)
         return x / scale - bias
 
-    def _get_inference_scheduler(self):
-        if self._inference_scheduler is None:
-            self._inference_scheduler = FlowMatchingScheduler(
-                prediction_type=self.hparams.prediction_type,
-            )
-        return self._inference_scheduler
-        
-    def _sample_t_logit_normal(self, shape, device, dtype): 
+    def _sample_t_logit_normal(self, shape, device, dtype):
         # Sample timesteps logit normal following https://arxiv.org/pdf/2403.03206
         m = self.hparams.t_m
         s = self.hparams.t_s
@@ -129,7 +121,7 @@ class LitModule(L.LightningModule):
     ):
         self.eval()
         if scheduler is None:
-            scheduler = self._get_inference_scheduler()
+            scheduler = self.noise_scheduler
 
         if not torch.is_tensor(class_labels):
             class_labels = torch.tensor(class_labels, device=self.device, dtype=torch.long)
