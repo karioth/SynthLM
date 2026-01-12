@@ -18,7 +18,9 @@ class LitModule(L.LightningModule):
         latent_size: int = 16,
         num_classes: int = 1000,
         dropout: float = 0.0,
-        prediction_type: str = "epsilon",
+        prediction_type: str = "flow",
+        t_m: float = 0.0,
+        t_s: float = 1.0,
         ddpm_num_steps: int = 1000,
         ddpm_beta_schedule: str = "cosine",
         batch_mul: int = 4,
@@ -130,6 +132,12 @@ class LitModule(L.LightningModule):
                     prediction_type=self.hparams.prediction_type,
                 )
         return self._inference_scheduler
+        
+    def _sample_t_logit_normal(self, shape, device, dtype):
+        m = self.hparams.t_m
+        s = self.hparams.t_s
+        u = torch.randn(shape, device=device, dtype=dtype) * s + m
+        return torch.sigmoid(u)
 
     @torch.no_grad()
     def sample_latents(
@@ -174,7 +182,7 @@ class LitModule(L.LightningModule):
             dtype=x0.dtype,
         )
         if is_flow:
-            timesteps = torch.rand(
+            timesteps = self._sample_t_logit_normal(
                 bsz * batch_mul * h * w,
                 device=x0.device,
                 dtype=x0.dtype,
@@ -221,7 +229,7 @@ class LitModule(L.LightningModule):
 
         noise = torch.randn_like(x0)
         if is_flow:
-            timesteps = torch.rand(bsz, device=x0.device, dtype=x0.dtype)
+            timesteps = self._sample_t_logit_normal(bsz, device=x0.device, dtype=x0.dtype)
         else:
             timesteps = torch.multinomial(self.sample_weight, bsz, replacement=True)
 
