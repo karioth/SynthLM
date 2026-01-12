@@ -6,7 +6,7 @@ import lightning as L
 from diffusers.optimization import get_scheduler
 
 from .models import All_models, DiT, Transformer
-from .schedule import DDPMScheduler, DPMSolverMultistepScheduler, FlowMatchingScheduler
+from .schedule import FlowMatchingScheduler
 from .tokenizer_models.vae import DiagonalGaussianDistribution
 
 
@@ -21,8 +21,6 @@ class LitModule(L.LightningModule):
         prediction_type: str = "flow",
         t_m: float = 0.0,
         t_s: float = 1.0,
-        ddpm_num_steps: int = 1000,
-        ddpm_beta_schedule: str = "cosine",
         batch_mul: int = 4,
         lr: float = 1e-4,
         weight_decay: float = 0.01,
@@ -40,19 +38,8 @@ class LitModule(L.LightningModule):
             drop=dropout,
         )
 
-        if prediction_type == "flow":
-            self.noise_scheduler = FlowMatchingScheduler(
-                num_train_timesteps=ddpm_num_steps,
-                prediction_type=prediction_type,
-            )
-        else:
-            self.noise_scheduler = DDPMScheduler(
-                num_train_timesteps=ddpm_num_steps,
-                beta_schedule=ddpm_beta_schedule,
-                prediction_type=prediction_type,
-            )
+        self.noise_scheduler = FlowMatchingScheduler(prediction_type=prediction_type)
 
-        self.register_buffer("sample_weight", torch.ones(ddpm_num_steps, dtype=torch.float32))
         self.register_buffer("scaling_factor", torch.tensor(1.0, dtype=torch.float32))
         self.register_buffer("bias_factor", torch.tensor(0.0, dtype=torch.float32))
         self.register_buffer("has_scaling", torch.tensor(False, dtype=torch.bool))
@@ -120,20 +107,13 @@ class LitModule(L.LightningModule):
 
     def _get_inference_scheduler(self):
         if self._inference_scheduler is None:
-            if self.hparams.prediction_type == "flow":
-                self._inference_scheduler = FlowMatchingScheduler(
-                    num_train_timesteps=self.hparams.ddpm_num_steps,
-                    prediction_type=self.hparams.prediction_type,
-                )
-            else:
-                self._inference_scheduler = DPMSolverMultistepScheduler(
-                    num_train_timesteps=self.hparams.ddpm_num_steps,
-                    beta_schedule=self.hparams.ddpm_beta_schedule,
-                    prediction_type=self.hparams.prediction_type,
-                )
+            self._inference_scheduler = FlowMatchingScheduler(
+                prediction_type=self.hparams.prediction_type,
+            )
         return self._inference_scheduler
         
-    def _sample_t_logit_normal(self, shape, device, dtype):
+    def _sample_t_logit_normal(self, shape, device, dtype): 
+        # Sample timesteps logit normal following https://arxiv.org/pdf/2403.03206
         m = self.hparams.t_m
         s = self.hparams.t_s
         u = torch.randn(shape, device=device, dtype=dtype) * s + m
@@ -174,25 +154,16 @@ class LitModule(L.LightningModule):
     def _loss_transformer(self, x0, labels):
         bsz, latent_size, h, w = x0.shape
         batch_mul = self.hparams.batch_mul
-        is_flow = self.hparams.prediction_type == "flow"
-
         noise = torch.randn(
             (bsz * batch_mul * h * w, latent_size),
             device=x0.device,
             dtype=x0.dtype,
         )
-        if is_flow:
-            timesteps = self._sample_t_logit_normal(
-                bsz * batch_mul * h * w,
-                device=x0.device,
-                dtype=x0.dtype,
-            )
-        else:
-            timesteps = torch.multinomial(
-                self.sample_weight,
-                bsz * batch_mul * h * w,
-                replacement=True,
-            )
+        timesteps = self._sample_t_logit_normal(
+            bsz * batch_mul * h * w,
+            device=x0.device,
+            dtype=x0.dtype,
+        )
 
         x0_rep = (
             x0.repeat_interleave(batch_mul, dim=0)
@@ -207,7 +178,7 @@ class LitModule(L.LightningModule):
             for x in (x_noisy, noise, velocity)
         ]
         timesteps = timesteps.reshape(bsz * batch_mul, h * w)
-        timesteps_model = timesteps * 1000.0 if is_flow else timesteps
+        timesteps_model = timesteps * 1000.0 if self.hparams.prediction_type == "flow" else timesteps
         timesteps_model = timesteps_model.to(dtype=x0.dtype)
 
         model_output = self.model(
@@ -217,33 +188,20 @@ class LitModule(L.LightningModule):
             y=labels,
             batch_mul=batch_mul,
         )
-        if self.hparams.prediction_type == "epsilon":
-            return F.mse_loss(model_output.float(), noise.float())
-        if self.hparams.prediction_type in ("v_prediction", "flow"):
-            return F.mse_loss(model_output.float(), velocity.float())
-        raise NotImplementedError(f"Unsupported prediction_type: {self.hparams.prediction_type}")
+        return F.mse_loss(model_output.float(), velocity.float())
 
     def _loss_dit(self, x0, labels):
         bsz = x0.shape[0]
-        is_flow = self.hparams.prediction_type == "flow"
-
         noise = torch.randn_like(x0)
-        if is_flow:
-            timesteps = self._sample_t_logit_normal(bsz, device=x0.device, dtype=x0.dtype)
-        else:
-            timesteps = torch.multinomial(self.sample_weight, bsz, replacement=True)
+        timesteps = self._sample_t_logit_normal(bsz, device=x0.device, dtype=x0.dtype)
 
         x_noisy = self.noise_scheduler.add_noise(x0, noise, timesteps)
         velocity = self.noise_scheduler.get_velocity(x0, noise, timesteps)
-        timesteps_model = timesteps * 1000.0 if is_flow else timesteps
+        timesteps_model = timesteps * 1000.0 if self.hparams.prediction_type == "flow" else timesteps
         timesteps_model = timesteps_model.to(dtype=x0.dtype)
 
         model_output = self.model(x_noisy, timesteps_model, y=labels)
-        if self.hparams.prediction_type == "epsilon":
-            return F.mse_loss(model_output.float(), noise.float())
-        if self.hparams.prediction_type in ("v_prediction", "flow"):
-            return F.mse_loss(model_output.float(), velocity.float())
-        raise NotImplementedError(f"Unsupported prediction_type: {self.hparams.prediction_type}")
+        return F.mse_loss(model_output.float(), velocity.float())
 
     def configure_optimizers(self):
         decay, no_decay = [], []

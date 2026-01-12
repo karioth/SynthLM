@@ -42,8 +42,6 @@ class FlowMatchingScheduler(SchedulerMixin, ConfigMixin):
     """
     Rectified flow scheduler with a linear path:
         x_t = (1 - t) * x0 + t * x1, where x1 ~ N(0, I).
-
-    This mirrors the DDPM scheduler API so training/sampling loops can stay unchanged.
     """
 
     order = 1
@@ -57,12 +55,6 @@ class FlowMatchingScheduler(SchedulerMixin, ConfigMixin):
         self.init_noise_sigma = 1.0
         self.num_inference_steps = None
         self.timesteps = None
-
-    def scale_model_input(self, sample: torch.Tensor, timestep: Optional[int] = None) -> torch.Tensor:
-        """
-        Kept for API compatibility; flow matching does not require input scaling.
-        """
-        return sample
 
     def set_timesteps(
         self,
@@ -152,6 +144,3 @@ class FlowMatchingScheduler(SchedulerMixin, ConfigMixin):
         if index == timesteps.shape[0] - 1:
             return torch.tensor(0.0, device=timesteps.device, dtype=timesteps.dtype)
         return timesteps[index + 1]
-
-    def __len__(self):
-        return self.config.num_train_timesteps

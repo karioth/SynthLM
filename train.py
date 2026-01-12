@@ -32,8 +32,6 @@ def main(args):
         num_classes=args.num_classes,
         dropout=args.dropout,
         prediction_type=args.prediction_type,
-        ddpm_num_steps=args.ddpm_num_steps,
-        ddpm_beta_schedule=args.ddpm_beta_schedule,
         batch_mul=args.batch_mul,
         lr=args.lr,
         weight_decay=args.weight_decay,
@@ -86,8 +84,6 @@ if __name__ == "__main__":
     p.add_argument("--num-classes", type=int, default=1000)
     p.add_argument("--dropout", type=float, default=0.0)
     p.add_argument("--prediction-type", type=str, default="flow")
-    p.add_argument("--ddpm-num-steps", type=int, default=1000)
-    p.add_argument("--ddpm-beta-schedule", type=str, default="cosine")
     p.add_argument("--batch-mul", type=int, default=4)
 
     p.add_argument("--batch-size", type=int, default=32)

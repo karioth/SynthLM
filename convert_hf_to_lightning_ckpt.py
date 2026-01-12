@@ -27,8 +27,6 @@ def parse_args():
     parser.add_argument("--num-classes", type=int, default=1000)
     parser.add_argument("--dropout", type=float, default=0.0)
     parser.add_argument("--prediction-type", type=str, default="flow")
-    parser.add_argument("--ddpm-num-steps", type=int, default=1000)
-    parser.add_argument("--ddpm-beta-schedule", type=str, default="cosine")
     parser.add_argument("--batch-mul", type=int, default=4)
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--weight-decay", type=float, default=0.1)
@@ -64,8 +62,6 @@ def main():
         num_classes=args.num_classes,
         dropout=args.dropout,
         prediction_type=args.prediction_type,
-        ddpm_num_steps=args.ddpm_num_steps,
-        ddpm_beta_schedule=args.ddpm_beta_schedule,
         batch_mul=args.batch_mul,
         lr=args.lr,
         weight_decay=args.weight_decay,

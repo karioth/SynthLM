@@ -31,8 +31,6 @@ python train.py \
   --weight-decay 0.1 \
   --lr-scheduler cosine \
   --lr-warmup-steps 100 \
-  --ddpm-beta-schedule cosine \
-  --ddpm-num-steps 1000 \
   --batch-mul 2 \
   --precision bf16-mixed
 ```
