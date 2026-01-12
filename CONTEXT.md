@@ -13,6 +13,7 @@ This note captures the current state of the repo, key scripts, and known gotchas
 - `sample_many.py`: sample many images (random classes).
 - `evaluate_fid.py`: multi-GPU FID/IS evaluation (uses torch.distributed).
 - `vae_roundtrip.py`: sanity check encode/decode on a random ImageNet image.
+- `cache_image_latents.py`: cache image latents to .npz for faster training.
 - `commands.md`: copy-paste commands for training and sampling.
 
 ## Data + VAE Expectations
@@ -22,8 +23,8 @@ This note captures the current state of the repo, key scripts, and known gotchas
   - If checkpoint lacks `config`, `load_vae` uses `AutoencoderKL` (KL-16 style).
   - If checkpoint has `config`, `load_vae` uses `sigma_vae`.
 - Optional cached latents:
-  - Generate with `data_utils/cache_imagenet.py` into `--cached_path`.
-  - Train with `--use_cached --cached_path ...` (ImageFolder only; no HF dataset).
+  - Generate with `cache_image_latents.py --data_dir <.../train>` (defaults to `<data_dir>_cached`; can override with `--cached_path`).
+  - Train with `--use_cached` and point `--train_data_dir` at the cached folder (ImageFolder only; no HF dataset).
 - `train_hf.py` computes `scaling_factor` and `bias_factor` from latents and saves them in `other_state.pth`.
 - Sampling/eval must read that `other_state.pth` for correct decoding.
 

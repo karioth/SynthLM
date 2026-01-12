@@ -3,23 +3,39 @@ import datetime
 import os
 import sys
 import time
-from pathlib import Path
 
 import numpy as np
 import torch
 import torch.backends.cudnn as cudnn
 import torchvision.transforms as transforms
+import torchvision.datasets as datasets
 
 from tqdm import tqdm
 
 from torch.utils.data import DataLoader, DistributedSampler
 
-SCRIPT_DIR = Path(__file__).resolve().parent
-REPO_ROOT = SCRIPT_DIR.parent
-sys.path.insert(0, str(REPO_ROOT))
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, SCRIPT_DIR)
 
 from utils import center_crop_arr, load_vae
-from data_utils.imagenet_cache_dataset import ImageFolderWithFilename
+
+
+class ImageFolderWithFilename(datasets.ImageFolder):
+    def __getitem__(self, index: int):
+        """
+        Returns:
+            tuple: (sample, target, filename).
+        """
+        path, target = self.samples[index]
+        sample = self.loader(path)
+        if self.transform is not None:
+            sample = self.transform(sample)
+        if self.target_transform is not None:
+            target = self.target_transform(target)
+
+        filename = path.split(os.path.sep)[-2:]
+        filename = os.path.join(*filename)
+        return sample, target, filename
 
 
 def init_distributed_mode(device):
@@ -35,28 +51,18 @@ def init_distributed_mode(device):
     return False, 0, 1
 
 
-def get_train_dir(args):
-    if args.train_data_dir:
-        return args.train_data_dir
-    if args.data_path:
-        return os.path.join(args.data_path, "train")
-    raise ValueError("Either --data_path or --train_data_dir must be set.")
-
-
 def get_args_parser():
-    parser = argparse.ArgumentParser("Cache ImageNet VAE latents", add_help=True)
+    parser = argparse.ArgumentParser("Cache image VAE latents", add_help=True)
     parser.add_argument("--batch_size", default=128, type=int,
                         help="Batch size per GPU (effective batch size is batch_size * # gpus)")
     parser.add_argument("--image_size", default=256, type=int,
                         help="Input image size")
     parser.add_argument("--vae", default=None, type=str,
                         help="Path to pre-trained VAE model")
-    parser.add_argument("--data_path", default=None, type=str,
-                        help="Dataset root containing train/")
-    parser.add_argument("--train_data_dir", default=None, type=str,
-                        help="Optional explicit train directory (overrides data_path)")
+    parser.add_argument("--data_dir", required=True, type=str,
+                        help="ImageFolder split directory to cache (e.g., .../train)")
     parser.add_argument("--cached_path", default=None, type=str,
-                        help="Output path for cached latents")
+                        help="Output path for cached latents (default: data_dir + '_cached')")
     parser.add_argument("--device", default="cuda", type=str,
                         help="Device to use for caching")
     parser.add_argument("--seed", default=0, type=int)
@@ -71,8 +77,6 @@ def get_args_parser():
 
 
 def main(args):
-    if args.cached_path is None:
-        raise ValueError("--cached_path is required")
     if args.vae is None:
         raise ValueError("--vae is required")
 
@@ -83,7 +87,8 @@ def main(args):
     np.random.seed(args.seed + rank)
     cudnn.benchmark = True
 
-    train_dir = get_train_dir(args)
+    data_dir = os.path.normpath(args.data_dir)
+    cached_path = os.path.normpath(args.cached_path or f"{data_dir}_cached")
 
     transform_train = transforms.Compose([
         transforms.Lambda(lambda pil_image: center_crop_arr(pil_image, args.image_size)),
@@ -91,9 +96,10 @@ def main(args):
         transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
     ])
 
-    dataset_train = ImageFolderWithFilename(train_dir, transform=transform_train)
+    dataset_train = ImageFolderWithFilename(data_dir, transform=transform_train)
     if rank == 0:
         print(dataset_train)
+        print(f"Cache output: {cached_path}")
 
     sampler_train = None
     if distributed:
@@ -133,7 +139,7 @@ def main(args):
             moments_flip = posterior_flip.parameters.detach()
 
         for i, path in enumerate(paths):
-            save_path = os.path.join(args.cached_path, path + ".npz")
+            save_path = os.path.join(cached_path, path + ".npz")
             os.makedirs(os.path.dirname(save_path), exist_ok=True)
             np.savez(
                 save_path,

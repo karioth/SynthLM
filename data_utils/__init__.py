@@ -1,3 +1,3 @@
-from .imagenet_cache_dataset import CachedImageFolder, ImageFolderWithFilename
+from .dataloaders import CachedImageFolder
 
-__all__ = ["CachedImageFolder", "ImageFolderWithFilename"]
+__all__ = ["CachedImageFolder"]
