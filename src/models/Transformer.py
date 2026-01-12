@@ -12,7 +12,6 @@ import functools
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from timm.layers import PatchEmbed
 try:
     from flash_attn import flash_attn_func
     has_flash_attn2 = torch.cuda.get_device_properties(0).major >= 8
@@ -123,9 +122,7 @@ class ConditionLayer(nn.Module):
 class Transformer(nn.Module):
     def __init__(
         self,
-        input_size=32,
-        patch_size=1,
-        flatten_input=False,
+        seq_len=1024,
         in_channels=4,
         hidden_size=1152,
         depth=28,
@@ -137,23 +134,19 @@ class Transformer(nn.Module):
         num_classes=1000,
         posi_scale=1,
         drop=0.0,
-        norm_layer=None
     ):
         super().__init__()
         self.in_channels = in_channels
         self.out_channels = in_channels
-        self.input_size = input_size
-        self.patch_size = patch_size
         self.num_heads = num_heads
         self.num_kv_heads = num_kv_heads if num_kv_heads is not None else num_heads
         self.head_dim = hidden_size // num_heads
         self.hidden_size = hidden_size
-        self.flatten_input_size = input_size * input_size
-        self.flatten_input = flatten_input
+        self.seq_len = seq_len
         self.posi_scale = posi_scale
 
-        self.x_embedder = PatchEmbed(input_size, patch_size, in_channels, hidden_size, strict_img_size=False, norm_layer=norm_layer) if not flatten_input else nn.Linear(in_channels, hidden_size, bias=False)
-        self.noisy_x_embedder = PatchEmbed(input_size, patch_size, in_channels, hidden_size, strict_img_size=False, norm_layer=norm_layer) if not flatten_input else nn.Linear(in_channels, hidden_size, bias=False)
+        self.x_embedder = nn.Linear(in_channels, hidden_size, bias=False)
+        self.noisy_x_embedder = nn.Linear(in_channels, hidden_size, bias=False)
         self.t_embedder = TimestepEmbedder(hidden_size)
         self.y_embedder = LabelEmbedder(num_classes, hidden_size, class_dropout_prob)
         self._precomputed_freqs_cis = None
@@ -165,7 +158,7 @@ class Transformer(nn.Module):
             MLPBlock(hidden_size, mlp_ratio=mlp_ratio) for _ in range(diffusion_depth)
         ])
         self.condition_layer = ConditionLayer(hidden_size)
-        self.final_layer = FinalLayer(hidden_size, patch_size * patch_size * self.out_channels if not flatten_input else self.out_channels)
+        self.final_layer = FinalLayer(hidden_size, self.out_channels)
 
         self.initialize_weights()
 
@@ -176,10 +169,6 @@ class Transformer(nn.Module):
                 if module.bias is not None:
                     nn.init.constant_(module.bias, 0)
         self.apply(_basic_init)
-        # Initialize patch_embed like nn.Linear (instead of nn.Conv2d):
-        if not self.flatten_input:
-            nn.init.constant_(self.x_embedder.proj.bias, 0)
-
         # Initialize label embedding table, timestep embedding MLP, and CLS:
         nn.init.normal_(self.y_embedder.embedding_table.weight, std=0.02)
         nn.init.normal_(self.t_embedder.mlp[0].weight, std=0.02)
@@ -201,25 +190,10 @@ class Transformer(nn.Module):
     def dtype(self):
         return next(self.parameters()).dtype
 
-    def unpatchify(self, x):
-        """
-        x: (N, T, patch_size**2 * C)
-        imgs: (N, H, W, C)
-        """
-        c = self.out_channels
-        p = self.x_embedder.patch_size[0]
-        h = w = int(x.shape[1] ** 0.5)
-        assert h * w == x.shape[1]
-
-        x = x.reshape(shape=(x.shape[0], h, w, p, p, c))
-        x = torch.einsum('nhwpqc->nchpwq', x)
-        imgs = x.reshape(shape=(x.shape[0], c, h * p, h * p))
-        return imgs
-
     def build_rel_pos(self, x, start_pos = 0):
         if self._precomputed_freqs_cis is None:
             angle = 1.0 / ((10000 * self.posi_scale) ** torch.linspace(0, 1, self.head_dim // 2, dtype=torch.float, device=x.device))
-            index = torch.arange(self.flatten_input_size).to(angle)
+            index = torch.arange(self.seq_len).to(angle)
             self._precomputed_freqs_cis = index[:, None] * angle
 
         cos = torch.cos(self._precomputed_freqs_cis[start_pos:start_pos+x.size(1)])
@@ -230,10 +204,11 @@ class Transformer(nn.Module):
 
     def forward(self, x_noise, t, x_start, y, batch_mul=1):
         """
-        Forward pass of ransformer.
-        x: (N, C, H, W) tensor of spatial inputs (images or latent representations of images)
-        t: (N,) tensor of diffusion timesteps
-        y: (N,) tensor of class labels
+        Forward pass of Transformer.
+        x_noise: (B, T, C) tensor of noisy latent tokens
+        x_start: (B, T, C) tensor of clean latent tokens
+        t: (B, T) or (B,) tensor of diffusion timesteps
+        y: (B,) tensor of class labels
         """
         condition = self.forward_parallel(x_start, y)
         condition = condition.repeat_interleave(batch_mul, dim=0)
@@ -258,8 +233,8 @@ class Transformer(nn.Module):
         for idx, block in enumerate(self.blocks):
             if incremental_state is not None and idx not in incremental_state:
                 incremental_state[idx] = {
-                    "key": torch.empty(x.shape[0], self.flatten_input_size, self.num_kv_heads, self.head_dim, device=x.device, dtype=x.dtype),
-                    "value": torch.empty(x.shape[0], self.flatten_input_size, self.num_kv_heads, self.head_dim, device=x.device, dtype=x.dtype),
+                    "key": torch.empty(x.shape[0], self.seq_len, self.num_kv_heads, self.head_dim, device=x.device, dtype=x.dtype),
+                    "value": torch.empty(x.shape[0], self.seq_len, self.num_kv_heads, self.head_dim, device=x.device, dtype=x.dtype),
                 }
             x = block(x, start_pos, rel_pos, incremental_state[idx])
             
@@ -276,31 +251,20 @@ class Transformer(nn.Module):
             x = block(x, c)
             
         x = self.final_layer(x, c)
-        if not self.flatten_input:
-            x = self.unpatchify(x)         # (N, out_channels, H, W)
         return x
     
     def sample_with_cfg(self, prev_token, cfg_scale, sample_func):
         bsz, half_bsz = prev_token.shape[0], prev_token.shape[0] // 2
         incremental_state = {}
         samples = []
-        for i in range(self.flatten_input_size):
-            if self.flatten_input:
-                z = torch.randn(bsz, 1, self.in_channels, device=self.device, dtype=self.dtype)
-            else:
-                p = self.noisy_x_embedder.patch_size[0]
-                h = w = self.input_size // p
-                z = torch.randn(bsz, self.in_channels, p, p, device=self.device, dtype=self.dtype)
+        for i in range(self.seq_len):
+            z = torch.randn(bsz, 1, self.in_channels, device=self.device, dtype=self.dtype)
             recurrent_input = torch.cat([prev_token, prev_token], dim=0) if i != 0 else prev_token
             condition = self.forward_recurrent(recurrent_input, start_pos = i, incremental_state=incremental_state)
             prev_token = sample_func(functools.partial(self.forward_with_cfg, condition=condition, cfg_scale=cfg_scale), z)
             prev_token, _ = prev_token.chunk(2, dim=0)  # Remove null class samples
             samples.append(prev_token)
-        if self.flatten_input:
-            samples = torch.cat(samples, 1)
-        else:
-            samples = torch.stack(samples, 2).view(half_bsz, self.in_channels, h, w, p, p).permute(0, 1, 2, 4, 3, 5).reshape(half_bsz, self.in_channels, h * p, w * p)
-        return samples
+        return torch.cat(samples, 1)
 
     def forward_with_cfg(self, x, t, condition, cfg_scale):
         """

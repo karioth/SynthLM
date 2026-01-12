@@ -9,7 +9,7 @@ from torchvision.utils import save_image
 from tqdm import tqdm
 
 from src.lightning import LitModule
-from src.utils import load_vae
+from src.utils import load_vae, sequence_to_image
 
 DEFAULT_CLASS_LABELS = [281, 282, 283, 284, 285, 4, 7, 963]
 
@@ -171,7 +171,7 @@ def main():
             cfg_scale=args.cfg_scale,
             num_inference_steps=args.num_inference_steps,
         )
-        images = vae.decode(latents)
+        images = vae.decode(sequence_to_image(latents))
 
         for img, label, idx in zip(images, batch_labels, batch_indices):
             filename = f"{idx:06d}_class{label}.png"

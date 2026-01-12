@@ -14,7 +14,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 import math
-from timm.layers import PatchEmbed
 from .RMSNorm import RMSNorm
 
 
@@ -203,9 +202,7 @@ class DiT(nn.Module):
     """
     def __init__(
         self,
-        input_size=32,
-        patch_size=1,
-        flatten_input=False,
+        seq_len=1024,
         in_channels=4,
         hidden_size=1152,
         depth=28,
@@ -215,28 +212,26 @@ class DiT(nn.Module):
         class_dropout_prob=0.1,
         num_classes=1000,
         drop=0.0,
-        norm_layer=None
+        use_2d_pos=True,
     ):
         super().__init__()
         self.in_channels = in_channels
         self.out_channels = in_channels
-        self.input_size = input_size
-        self.patch_size = patch_size if not flatten_input else 1
         self.num_heads = num_heads
         self.num_kv_heads = num_kv_heads if num_kv_heads is not None else num_heads
-        self.flatten_input_size = input_size * input_size // self.patch_size // self.patch_size
-        self.flatten_input = flatten_input
+        self.seq_len = seq_len
+        self.use_2d_pos = use_2d_pos
 
-        self.x_embedder = PatchEmbed(input_size, patch_size, in_channels, hidden_size, strict_img_size=False, norm_layer=norm_layer) if not flatten_input else nn.Linear(in_channels, hidden_size, bias=False)
+        self.x_embedder = nn.Linear(in_channels, hidden_size, bias=False)
         self.t_embedder = TimestepEmbedder(hidden_size)
         self.y_embedder = LabelEmbedder(num_classes, hidden_size, class_dropout_prob)
         # Will use fixed sin-cos embedding:
-        self.pos_embed = nn.Parameter(torch.zeros(1, self.flatten_input_size, hidden_size), requires_grad=False)
+        self.pos_embed = nn.Parameter(torch.zeros(1, self.seq_len, hidden_size), requires_grad=False)
 
         self.blocks = nn.ModuleList([
             DiTBlock(hidden_size, self.num_heads, self.num_kv_heads, mlp_ratio=mlp_ratio, proj_drop=drop, attn_drop=drop) for _ in range(depth)
         ])
-        self.final_layer = FinalLayer(hidden_size, self.patch_size * self.patch_size * self.out_channels)
+        self.final_layer = FinalLayer(hidden_size, self.out_channels)
         self.initialize_weights()
         
     @property
@@ -256,13 +251,13 @@ class DiT(nn.Module):
         self.apply(_basic_init)
 
         # Initialize (and freeze) pos_embed by sin-cos embedding:
-        pos_embed = get_2d_sincos_pos_embed(self.pos_embed.shape[-1], int(self.x_embedder.num_patches ** 0.5)) if not self.flatten_input \
-            else get_1d_sincos_pos_embed(self.pos_embed.shape[-1], self.flatten_input_size)
+        if self.use_2d_pos:
+            grid_size = int(self.seq_len ** 0.5)
+            assert grid_size * grid_size == self.seq_len, "seq_len must be a perfect square for 2D pos embed."
+            pos_embed = get_2d_sincos_pos_embed(self.pos_embed.shape[-1], grid_size)
+        else:
+            pos_embed = get_1d_sincos_pos_embed(self.pos_embed.shape[-1], self.seq_len)
         self.pos_embed.data.copy_(torch.from_numpy(pos_embed).float().unsqueeze(0))
-
-        # Initialize patch_embed like nn.Linear (instead of nn.Conv2d):
-        if not self.flatten_input:
-            nn.init.constant_(self.x_embedder.proj.bias, 0)
 
         # Initialize label embedding table:
         nn.init.normal_(self.y_embedder.embedding_table.weight, std=0.02)
@@ -279,42 +274,25 @@ class DiT(nn.Module):
         nn.init.constant_(self.final_layer.adaLN_modulation[-1].weight, 0)
         nn.init.constant_(self.final_layer.linear.weight, 0)
 
-    def unpatchify(self, x):
-        """
-        x: (N, T, patch_size**2 * C)
-        imgs: (N, H, W, C)
-        """
-        c = self.out_channels
-        p = self.x_embedder.patch_size[0]
-        h = w = int(x.shape[1] ** 0.5)
-        assert h * w == x.shape[1]
-
-        x = x.reshape(shape=(x.shape[0], h, w, p, p, c))
-        x = torch.einsum('nhwpqc->nchpwq', x)
-        imgs = x.reshape(shape=(x.shape[0], c, h * p, h * p))
-        return imgs
-
     def forward(self, x_noise, t, y, **kwargs):
         """
         Forward pass of DiT.
-        x: (N, C, H, W) tensor of spatial inputs (images or latent representations of images)
-        t: (N,) tensor of diffusion timesteps
-        y: (N,) tensor of class labels
+        x_noise: (B, T, C) tensor of noisy latent tokens
+        t: (B,) tensor of diffusion timesteps
+        y: (B,) tensor of class labels
         """
-        x = self.x_embedder(x_noise) + self.pos_embed  # (N, T, D), where T = H * W / patch_size ** 2
+        x = self.x_embedder(x_noise) + self.pos_embed  # (N, T, D)
         t = self.t_embedder(t)                   # (N, D)
         y = self.y_embedder(y, self.training)    # (N, D)
         c = (t + y).unsqueeze(1)                 # (N, D)
         for block in self.blocks:
             x = block(x, c)                      # (N, T, D)
-        x = self.final_layer(x, c)               # (N, T, patch_size ** 2 * out_channels)
-        if not self.flatten_input:
-            x = self.unpatchify(x)               # (N, out_channels, H, W)
+        x = self.final_layer(x, c)               # (N, T, out_channels)
         return x
     
     def sample_with_cfg(self, y, cfg_scale, sample_func):
         bsz = y.shape[0]
-        z = torch.randn(bsz, self.in_channels, self.input_size, self.input_size, device=self.device, dtype=self.dtype) if not self.flatten_input else torch.randn(bsz, self.flatten_input_size, self.in_channels, device=self.device, dtype=self.dtype)
+        z = torch.randn(bsz, self.seq_len, self.in_channels, device=self.device, dtype=self.dtype)
         samples = sample_func(functools.partial(self.forward_with_cfg, y=y, cfg_scale=cfg_scale), z)
         samples, _ = samples.chunk(2, dim=0)
         return samples

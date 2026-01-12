@@ -77,6 +77,23 @@ def load_vae(vae_model_path, image_size):
     return vae, input_size, latent_size, flatten_input
 
 
+def image_to_sequence(x: torch.Tensor) -> torch.Tensor:
+    if x.dim() != 4:
+        raise ValueError(f"Expected (B, C, H, W) tensor, got shape {tuple(x.shape)}")
+    bsz, channels, height, width = x.shape
+    return x.permute(0, 2, 3, 1).reshape(bsz, height * width, channels)
+
+
+def sequence_to_image(x: torch.Tensor) -> torch.Tensor:
+    if x.dim() != 3:
+        raise ValueError(f"Expected (B, T, C) tensor, got shape {tuple(x.shape)}")
+    bsz, seq_len, channels = x.shape
+    grid_size = int(seq_len ** 0.5)
+    if grid_size * grid_size != seq_len:
+        raise ValueError(f"seq_len must be a perfect square, got {seq_len}")
+    return x.reshape(bsz, grid_size, grid_size, channels).permute(0, 3, 1, 2)
+
+
 class EMAWeightAveraging(WeightAveraging):
     """
     Matches Lightning's stable-doc example (starts after 100 optimizer steps).

@@ -8,6 +8,7 @@ from diffusers.optimization import get_scheduler
 from .models import All_models, DiT, Transformer
 from .flow_matching import FlowMatchingScheduler
 from .tokenizer_models.vae import DiagonalGaussianDistribution
+from .utils import image_to_sequence
 
 
 class LitModule(L.LightningModule):
@@ -30,11 +31,11 @@ class LitModule(L.LightningModule):
         super().__init__()
         self.save_hyperparameters()
 
+        seq_len = input_size * input_size
         self.model = All_models[model_name](
-            input_size=input_size,
+            seq_len=seq_len,
             in_channels=latent_size,
             num_classes=num_classes,
-            flatten_input=False,
             drop=dropout,
         )
 
@@ -53,11 +54,12 @@ class LitModule(L.LightningModule):
             self._init_scaling(x0)
 
         x0 = self._normalize(x0)
+        x0_seq = image_to_sequence(x0)
 
         if isinstance(self.model, Transformer):
-            loss = self._loss_transformer(x0, labels)
+            loss = self._loss_transformer(x0_seq, labels)
         elif isinstance(self.model, DiT):
-            loss = self._loss_dit(x0, labels)
+            loss = self._loss_dit(x0_seq, labels)
         else:
             raise NotImplementedError("Unsupported model type.")
 
@@ -144,32 +146,28 @@ class LitModule(L.LightningModule):
         return self.unnormalize_latents(latents)
 
     def _loss_transformer(self, x0, labels):
-        bsz, latent_size, h, w = x0.shape
+        bsz, seq_len, latent_size = x0.shape
         batch_mul = self.hparams.batch_mul
         noise = torch.randn(
-            (bsz * batch_mul * h * w, latent_size),
+            (bsz * batch_mul * seq_len, latent_size),
             device=x0.device,
             dtype=x0.dtype,
         )
         timesteps = self._sample_t_logit_normal(
-            bsz * batch_mul * h * w,
+            bsz * batch_mul * seq_len,
             device=x0.device,
             dtype=x0.dtype,
         )
 
-        x0_rep = (
-            x0.repeat_interleave(batch_mul, dim=0)
-            .permute(0, 2, 3, 1)
-            .reshape(-1, latent_size)
-        )
+        x0_rep = x0.repeat_interleave(batch_mul, dim=0).reshape(-1, latent_size)
         x_noisy = self.noise_scheduler.add_noise(x0_rep, noise, timesteps)
         velocity = self.noise_scheduler.get_velocity(x0_rep, noise, timesteps)
 
         x_noisy, noise, velocity = [
-            x.reshape(bsz * batch_mul, h, w, latent_size).permute(0, 3, 1, 2)
+            x.reshape(bsz * batch_mul, seq_len, latent_size)
             for x in (x_noisy, noise, velocity)
         ]
-        timesteps = timesteps.reshape(bsz * batch_mul, h * w)
+        timesteps = timesteps.reshape(bsz * batch_mul, seq_len)
         timesteps_model = timesteps * 1000.0 if self.hparams.prediction_type == "flow" else timesteps
         timesteps_model = timesteps_model.to(dtype=x0.dtype)
 
