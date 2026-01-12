@@ -14,7 +14,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 import math
-from timm.models.vision_transformer import PatchEmbed
+from timm.layers import PatchEmbed
 from .RMSNorm import RMSNorm
 
 

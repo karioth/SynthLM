@@ -3,8 +3,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.utils.checkpoint as checkpoint
-from timm.models.layers import DropPath, Mlp, PatchEmbed, \
-    trunc_normal_ as __call_trunc_normal_
+from timm.layers import DropPath, Mlp, PatchEmbed, trunc_normal_ as __call_trunc_normal_
 
 def trunc_normal_(tensor, mean=0., std=1.):
     __call_trunc_normal_(tensor, mean=mean, std=std, a=-std, b=std)

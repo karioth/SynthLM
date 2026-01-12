@@ -1,7 +1,6 @@
 import argparse
 import datetime
 import os
-import sys
 import time
 
 import numpy as np
@@ -14,10 +13,7 @@ from tqdm import tqdm
 
 from torch.utils.data import DataLoader, DistributedSampler
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, SCRIPT_DIR)
-
-from utils import center_crop_arr, load_vae
+from src.utils import center_crop_arr, load_vae
 
 
 class ImageFolderWithFilename(datasets.ImageFolder):

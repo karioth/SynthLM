@@ -7,10 +7,10 @@ import torch
 from tqdm import tqdm
 from accelerate.utils import set_seed
 
-from tokenizer_models import AutoencoderKL, load_vae
+from src.utils import load_vae
 
-from schedule import DPMSolverMultistepScheduler, FlowMatchingScheduler
-from models import All_models
+from src.schedule import DPMSolverMultistepScheduler, FlowMatchingScheduler
+from src.models import All_models
 
 
 def parse_args():

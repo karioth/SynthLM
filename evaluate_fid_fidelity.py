@@ -6,7 +6,7 @@ import torch
 from torchvision import transforms
 from torchvision.datasets import ImageFolder
 import torch_fidelity
-from utils import center_crop_arr, safe_blob_write
+from src.utils import center_crop_arr, safe_blob_write
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Simple example of a training script.")

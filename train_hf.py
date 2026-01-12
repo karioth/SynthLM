@@ -21,12 +21,12 @@ import diffusers
 from diffusers.training_utils import compute_snr
 from diffusers.optimization import get_scheduler
 
-from models import All_models, DiT, Transformer, EMAModel
+from src.models import All_models, DiT, Transformer, EMAModel
 from timm.models import create_model
-from utils import center_crop_arr, safe_blob_write, load_vae
-from schedule import DDPMScheduler, FlowMatchingScheduler
-from data_utils import CachedImageFolder
-from tokenizer_models.vae import DiagonalGaussianDistribution
+from src.utils import center_crop_arr, safe_blob_write, load_vae
+from src.schedule import DDPMScheduler, FlowMatchingScheduler
+from src.data_utils import CachedImageFolder
+from src.tokenizer_models.vae import DiagonalGaussianDistribution
 
 import wandb
 
@@ -225,6 +225,7 @@ def main(args):
     model, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
         model, optimizer, train_dataloader, lr_scheduler
     )
+    model_for_type = accelerator.unwrap_model(model)
     # vae = accelerator.prepare_model(vae, evaluation_mode=True, device_placement=True)
     vae.to(accelerator.device)
     vae.eval()
@@ -296,10 +297,14 @@ def main(args):
                 if scaling_factor is None:
                     scaling_factor = 1. / clean_images.flatten().std()
                     bias_factor = -clean_images.flatten().mean()
-                    dist.all_reduce(scaling_factor, op=dist.ReduceOp.SUM)
-                    dist.all_reduce(bias_factor, op=dist.ReduceOp.SUM)
-                    scaling_factor = scaling_factor.item() / dist.get_world_size()
-                    bias_factor = bias_factor.item() / dist.get_world_size()
+                    if dist.is_available() and dist.is_initialized():
+                        dist.all_reduce(scaling_factor, op=dist.ReduceOp.SUM)
+                        dist.all_reduce(bias_factor, op=dist.ReduceOp.SUM)
+                        scaling_factor = scaling_factor.item() / dist.get_world_size()
+                        bias_factor = bias_factor.item() / dist.get_world_size()
+                    else:
+                        scaling_factor = scaling_factor.item()
+                        bias_factor = bias_factor.item()
                     logger.info(f"Scaling factor: {scaling_factor}, Bias factor: {bias_factor}")
                 clean_images = (clean_images + bias_factor) * scaling_factor
                 mode_images = (mode_images + bias_factor) * scaling_factor
@@ -307,7 +312,7 @@ def main(args):
             with accelerator.accumulate(model):
                 bsz, latent_size, h, w = clean_images.shape
                 is_flow = args.prediction_type == "flow"
-                if isinstance(model.module, Transformer):
+                if isinstance(model_for_type, Transformer):
                     noise = torch.randn((bsz * args.batch_mul * h * w, latent_size), device=clean_images.device, dtype=clean_images.dtype)
                     if is_flow:
                         timesteps = torch.rand(bsz * args.batch_mul * h * w, device=clean_images.device, dtype=clean_images.dtype)
@@ -320,7 +325,7 @@ def main(args):
                     timesteps = timesteps.reshape(bsz * args.batch_mul, h * w)
                     timesteps_model = timesteps * 1000.0 if is_flow else timesteps # scaled to ddpm size for timestep embedder, so sinusoidals are well behaved
                     model_output = model(noisy_images.to(dtype), timesteps_model.to(dtype), x_start=clean_images.to(dtype), y=label, batch_mul=args.batch_mul)
-                elif isinstance(model.module, DiT):
+                elif isinstance(model_for_type, DiT):
                     noise = torch.randn_like(clean_images)
                     if is_flow:
                         timesteps = torch.rand(bsz, device=clean_images.device, dtype=clean_images.dtype)

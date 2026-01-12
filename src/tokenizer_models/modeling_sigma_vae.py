@@ -1,7 +1,7 @@
 import torch
 from torch import nn
 from torch.nn import functional as F
-from timm.models.registry import register_model
+from timm.models import register_model
 
 from .modeling_common import EncoderDecoderArchForImageReconstrction, get_basic_config
 

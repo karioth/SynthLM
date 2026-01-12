@@ -1,7 +1,7 @@
 import torch
 from torch import nn
 
-from timm.models.layers import trunc_normal_ as __call_trunc_normal_
+from timm.layers import trunc_normal_ as __call_trunc_normal_
 
 from .modeling_utils import VisionTransformer
 from .modeling_beit3_vision import beit3_base_vision

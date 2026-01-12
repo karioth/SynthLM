@@ -8,7 +8,7 @@ import logging
 import os
 import requests
 from tqdm import tqdm
-from tokenizer_models import AutoencoderKL, sigma_vae
+from .tokenizer_models import AutoencoderKL, sigma_vae
 
 #################################################################################
 #                             Training Helper Functions                         #

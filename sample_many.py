@@ -10,10 +10,10 @@ from accelerate.utils import set_seed
 
 from timm.models import create_model
 from safetensors.torch import load_file 
-from tokenizer_models import AutoencoderKL, load_vae
+from src.utils import load_vae
 
-from schedule import DPMSolverMultistepScheduler, FlowMatchingScheduler
-from models import All_models
+from src.schedule import DPMSolverMultistepScheduler, FlowMatchingScheduler
+from src.models import All_models
 
 imagenet_indices = [
     1, 10, 84, 94, 97, 98, 100, 104, 107, 117, 151, 157, 161, 178, 182, 183,

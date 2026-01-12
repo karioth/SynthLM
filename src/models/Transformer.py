@@ -12,7 +12,7 @@ import functools
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from timm.models.vision_transformer import PatchEmbed
+from timm.layers import PatchEmbed
 try:
     from flash_attn import flash_attn_func
     has_flash_attn2 = torch.cuda.get_device_properties(0).major >= 8

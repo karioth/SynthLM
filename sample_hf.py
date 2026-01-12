@@ -8,10 +8,10 @@ from torchvision.utils import save_image
 from accelerate.utils import set_seed
 
 from safetensors.torch import load_file 
-from utils import load_vae
+from src.utils import load_vae
 
-from schedule import DPMSolverMultistepScheduler, FlowMatchingScheduler
-from models import All_models
+from src.schedule import DPMSolverMultistepScheduler, FlowMatchingScheduler
+from src.models import All_models
 
 
 def parse_args():

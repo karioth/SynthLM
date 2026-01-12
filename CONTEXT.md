@@ -3,16 +3,16 @@
 This note captures the current state of the repo, key scripts, and known gotchas so a new chat can pick up quickly.
 
 ## Quick Map
+- Core code now lives under `src/`.
 - `train_hf.py`: main training entrypoint (Accelerate). Supports DiT and Transformer.
-- `models/Transformer.py`: causal Transformer + diffusion head (next-token diffusion).
-- `models/DiT.py`: non-causal diffusion transformer.
-- `schedule/ddpm.py`: custom DDPM scheduler (supports epsilon and v_prediction).
-- `schedule/dpm_solver.py`: DPM-Solver scheduler for sampling.
-- `utils.py`: `load_vae`, `center_crop_arr`, and VAE download helper.
+- `src/models/Transformer.py`: causal Transformer + diffusion head (next-token diffusion).
+- `src/models/DiT.py`: non-causal diffusion transformer.
+- `src/schedule/ddpm.py`: custom DDPM scheduler (supports epsilon and v_prediction).
+- `src/schedule/dpm_solver.py`: DPM-Solver scheduler for sampling.
+- `src/utils.py`: `load_vae`, `center_crop_arr`, and VAE download helper.
 - `sample_hf.py`: sample a grid image from a checkpoint.
 - `sample_many.py`: sample many images (random classes).
 - `evaluate_fid.py`: multi-GPU FID/IS evaluation (uses torch.distributed).
-- `vae_roundtrip.py`: sanity check encode/decode on a random ImageNet image.
 - `cache_image_latents.py`: cache image latents to .npz for faster training.
 - `commands.md`: copy-paste commands for training and sampling.
 
@@ -76,7 +76,7 @@ This is the causal Transformer + diffusion head (next-token diffusion).
   - `eps = uncond + cfg_scale * (cond - uncond)`.
 
 ## Sampling + Evaluation
-- `sample_hf.py` now imports `load_vae` from `utils` and moves VAE to GPU/dtype.
+- `sample_hf.py` imports `load_vae` from `src.utils` and moves VAE to GPU/dtype.
 - `sample_hf.py` writes images to `visuals/` (create it if missing).
 - For tokenizer-analysis comparison, sample with:
   - `--prediction_type v_prediction`
@@ -93,6 +93,7 @@ This is the causal Transformer + diffusion head (next-token diffusion).
 - Fix by ensuring conda libstdc++ is loaded first:
   - `export LD_LIBRARY_PATH="$CONDA_PREFIX/lib:$LD_LIBRARY_PATH"`
   - if needed: `export LD_PRELOAD="$CONDA_PREFIX/lib/libstdc++.so.6"`
+- For local testing in this repo, use the `jamendo` conda environment.
 
 ## Branching
 - There is a `flow` branch created to experiment with flow matching.
