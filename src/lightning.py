@@ -6,7 +6,7 @@ import lightning as L
 from diffusers.optimization import get_scheduler
 
 from .models import All_models, DiT, Transformer
-from .schedule import FlowMatchingScheduler
+from .flow_matching import FlowMatchingScheduler
 from .tokenizer_models.vae import DiagonalGaussianDistribution
 
 
