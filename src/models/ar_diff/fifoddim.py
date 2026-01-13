@@ -7,7 +7,7 @@ import torch
 from tqdm import tqdm
 
 
-class DDIMSampler(object):
+class ADFIFO(object):
     def __init__(self, model, schedule="linear", **kwargs):
         super().__init__()
         self.model = model
@@ -117,6 +117,92 @@ class DDIMSampler(object):
             img[:, valid_interval_s : valid_interval_e, :, :] = valid_img
 
         return img, None
+
+    @torch.no_grad()
+    def p_sample_ddim(self, x, c, t, index, update_mask, 
+                      repeat_noise=False, use_original_steps=False, 
+                      quantize_denoised=False, temperature=1., noise_dropout=0., 
+                      unconditional_guidance_scale=1., unconditional_conditioning=None,
+                      dynamic_threshold=None):
+        b, *_, device = *x.shape, x.device
+
+        if unconditional_conditioning is None or unconditional_guidance_scale == 1.:
+            model_output = self.model(x, t, c)
+        else:
+            x_in = torch.cat([x] * 2)
+            t_in = torch.cat([t] * 2)
+            if isinstance(c, dict):
+                assert isinstance(unconditional_conditioning, dict)
+                c_in = dict()
+                for k in c:
+                    if isinstance(c[k], list):
+                        c_in[k] = [torch.cat([
+                            unconditional_conditioning[k][i],
+                            c[k][i]]) for i in range(len(c[k]))]
+                    else:
+                        c_in[k] = torch.cat([
+                                unconditional_conditioning[k],
+                                c[k]])
+            elif isinstance(c, list):
+                c_in = list()
+                assert isinstance(unconditional_conditioning, list)
+                for i in range(len(c)):
+                    c_in.append(torch.cat([unconditional_conditioning[i], c[i]]))
+            else:
+                c_in = torch.cat([unconditional_conditioning, c])
+            model_uncond, model_t = self.model(x_in, t_in, c_in).chunk(2)
+            model_output = model_uncond + unconditional_guidance_scale * (model_t - model_uncond)
+
+        # NOTE: Do not update values if the noise step is the same
+        # print(f"t: {t.shape} update_mask: {update_mask.shape}, x: {x.shape}, model_output: {model_output.shape}")
+        model_output = model_output * update_mask + x * (1 - update_mask)
+
+        if self.model.parameterization == "v":
+            e_t = self.model.predict_eps_from_z_and_v(x, t, model_output)
+        elif self.model.parameterization == "x0":
+            e_t = self.model._predict_eps_from_xstart(x, t, model_output)
+        elif self.model.parameterization == "eps":
+            e_t = model_output
+        else:
+            raise NotImplementedError(self.model.parameterization)
+
+        alphas = self.model.alphas_cumprod if use_original_steps else self.ddim_alphas
+        alphas_prev = self.model.alphas_cumprod_prev if use_original_steps else self.ddim_alphas_prev
+        sqrt_one_minus_alphas = self.model.sqrt_one_minus_alphas_cumprod if use_original_steps else self.ddim_sqrt_one_minus_alphas
+        sigmas = self.model.ddim_sigmas_for_original_num_steps if use_original_steps else self.ddim_sigmas
+        # select parameters corresponding to the currently considered timestep
+        a_t = repeat(torch.tensor(alphas[index], dtype=x.dtype), 
+                     't -> b t l c', b=b, l=1, c=1).to(device)
+        a_prev = repeat(torch.tensor(alphas_prev[index], dtype=x.dtype), 
+                        't -> b t l c', b=b, l=1, c=1).to(device)
+        sigma_t = repeat(torch.tensor(sigmas[index], dtype=x.dtype), 
+                         't -> b t l c', b=b, l=1, c=1).to(device)
+        sqrt_one_minus_at = repeat(torch.tensor(sqrt_one_minus_alphas[index], dtype=x.dtype), 
+                                   't -> b t l c', b=b, l=1, c=1).to(device)
+
+        # current prediction for x_0
+        if self.model.parameterization == "eps":
+            pred_x0 = (x - sqrt_one_minus_at * e_t) / a_t.sqrt()
+        elif self.model.parameterization == "v":
+            pred_x0 = self.model.predict_start_from_z_and_v(x, t, model_output)
+        elif self.model.parameterization == "x0":
+            pred_x0 = model_output
+        else:
+            raise NotImplementedError(self.model.parameterization)
+
+        if quantize_denoised:
+            pred_x0, _, *_ = self.model.first_stage_model.quantize(pred_x0)
+
+        if dynamic_threshold is not None:
+            raise NotImplementedError()
+
+        # direction pointing to x_t
+        dir_xt = (1. - a_prev - sigma_t**2).sqrt() * e_t
+        noise = sigma_t * noise_like(x.shape, device, repeat_noise) * temperature
+        if noise_dropout > 0.:
+            noise = torch.nn.functional.dropout(noise, p=noise_dropout)
+        x_prev = a_prev.sqrt() * pred_x0 + dir_xt + noise
+        return x_prev, pred_x0
 
 
 def cfg_combine(model, x, t, cond, uncond, scale):

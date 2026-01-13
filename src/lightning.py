@@ -1,12 +1,11 @@
 import torch
 import torch.distributed as dist
-import torch.nn.functional as F
 import lightning as L
 
 from diffusers.optimization import get_scheduler
 
 from .models import All_models, DiT, Transformer
-from .flow_matching import FlowMatchingScheduler
+from .flow_matching import FlowMatchingSchedulerDiT, FlowMatchingSchedulerTransformer
 from .tokenizer_models.vae import DiagonalGaussianDistribution
 from .utils import image_to_sequence
 
@@ -39,7 +38,21 @@ class LitModule(L.LightningModule):
             drop=dropout,
         )
 
-        self.noise_scheduler = FlowMatchingScheduler(prediction_type=prediction_type)
+        if isinstance(self.model, Transformer):
+            self.noise_scheduler = FlowMatchingSchedulerTransformer(
+                prediction_type=prediction_type,
+                t_m=t_m,
+                t_s=t_s,
+                batch_mul=batch_mul,
+            )
+        elif isinstance(self.model, DiT):
+            self.noise_scheduler = FlowMatchingSchedulerDiT(
+                prediction_type=prediction_type,
+                t_m=t_m,
+                t_s=t_s,
+            )
+        else:
+            raise NotImplementedError("Unsupported model type.")
 
         self.register_buffer("scaling_factor", torch.tensor(1.0, dtype=torch.float32))
         self.register_buffer("bias_factor", torch.tensor(0.0, dtype=torch.float32))
@@ -56,12 +69,7 @@ class LitModule(L.LightningModule):
         x0 = self._normalize(x0)
         x0_seq = image_to_sequence(x0)
 
-        if isinstance(self.model, Transformer):
-            loss = self._loss_transformer(x0_seq, labels)
-        elif isinstance(self.model, DiT):
-            loss = self._loss_dit(x0_seq, labels)
-        else:
-            raise NotImplementedError("Unsupported model type.")
+        loss = self.noise_scheduler.get_losses(self.model, x0_seq, labels)
 
         self.log("train/loss", loss, on_step=True, on_epoch=False, prog_bar=True, sync_dist=True)
         return loss
@@ -106,13 +114,6 @@ class LitModule(L.LightningModule):
         scale = self.scaling_factor.to(dtype=x.dtype)
         return x / scale - bias
 
-    def _sample_t_logit_normal(self, shape, device, dtype):
-        # Sample timesteps logit normal following https://arxiv.org/pdf/2403.03206
-        m = self.hparams.t_m
-        s = self.hparams.t_s
-        u = torch.randn(shape, device=device, dtype=dtype) * s + m
-        return torch.sigmoid(u)
-
     @torch.no_grad()
     def sample_latents(
         self,
@@ -133,65 +134,9 @@ class LitModule(L.LightningModule):
         y_null = torch.full_like(class_labels, self.hparams.num_classes, device=self.device)
         y = torch.cat([class_labels, y_null], 0)
 
-        def p_sample(model, image):
-            scheduler.set_timesteps(num_inference_steps)
-            timesteps = scheduler.timesteps
-            timesteps_model = timesteps * 1000.0 if self.hparams.prediction_type == "flow" else timesteps
-            for t, t_model in zip(timesteps, timesteps_model):
-                model_output = model(image, t_model.repeat(image.shape[0]).to(image))
-                image = scheduler.step(model_output, t, image).prev_sample
-            return image
-
-        latents = self.model.sample_with_cfg(y, cfg_scale, p_sample)
+        scheduler.set_timesteps(num_inference_steps, device=self.device)
+        latents = self.model.sample_with_cfg(y, cfg_scale, scheduler)
         return self.unnormalize_latents(latents)
-
-    def _loss_transformer(self, x0, labels):
-        bsz, seq_len, latent_size = x0.shape
-        batch_mul = self.hparams.batch_mul
-        noise = torch.randn(
-            (bsz * batch_mul * seq_len, latent_size),
-            device=x0.device,
-            dtype=x0.dtype,
-        )
-        timesteps = self._sample_t_logit_normal(
-            bsz * batch_mul * seq_len,
-            device=x0.device,
-            dtype=x0.dtype,
-        )
-
-        x0_rep = x0.repeat_interleave(batch_mul, dim=0).reshape(-1, latent_size)
-        x_noisy = self.noise_scheduler.add_noise(x0_rep, noise, timesteps)
-        velocity = self.noise_scheduler.get_velocity(x0_rep, noise, timesteps)
-
-        x_noisy, noise, velocity = [
-            x.reshape(bsz * batch_mul, seq_len, latent_size)
-            for x in (x_noisy, noise, velocity)
-        ]
-        timesteps = timesteps.reshape(bsz * batch_mul, seq_len)
-        timesteps_model = timesteps * 1000.0 if self.hparams.prediction_type == "flow" else timesteps
-        timesteps_model = timesteps_model.to(dtype=x0.dtype)
-
-        model_output = self.model(
-            x_noisy,
-            timesteps_model,
-            x_start=x0,
-            y=labels,
-            batch_mul=batch_mul,
-        )
-        return F.mse_loss(model_output.float(), velocity.float())
-
-    def _loss_dit(self, x0, labels):
-        bsz = x0.shape[0]
-        noise = torch.randn_like(x0)
-        timesteps = self._sample_t_logit_normal(bsz, device=x0.device, dtype=x0.dtype)
-
-        x_noisy = self.noise_scheduler.add_noise(x0, noise, timesteps)
-        velocity = self.noise_scheduler.get_velocity(x0, noise, timesteps)
-        timesteps_model = timesteps * 1000.0 if self.hparams.prediction_type == "flow" else timesteps
-        timesteps_model = timesteps_model.to(dtype=x0.dtype)
-
-        model_output = self.model(x_noisy, timesteps_model, y=labels)
-        return F.mse_loss(model_output.float(), velocity.float())
 
     def configure_optimizers(self):
         decay, no_decay = [], []

@@ -16,14 +16,12 @@ from dataclasses import dataclass
 from typing import Optional, Tuple, Union
 
 import torch
-
-from diffusers.configuration_utils import ConfigMixin, register_to_config
-from diffusers.utils import BaseOutput
-from diffusers.schedulers.scheduling_utils import SchedulerMixin
+import torch.nn as nn
+import torch.nn.functional as F
 
 
 @dataclass
-class FlowMatchingSchedulerOutput(BaseOutput):
+class FlowMatchingSchedulerOutput:
     """
     Output class for the scheduler's `step` function output.
 
@@ -38,23 +36,31 @@ class FlowMatchingSchedulerOutput(BaseOutput):
     pred_original_sample: Optional[torch.Tensor] = None
 
 
-class FlowMatchingScheduler(SchedulerMixin, ConfigMixin):
+class FlowMatchingBase(nn.Module):
     """
     Rectified flow scheduler with a linear path:
         x_t = (1 - t) * x0 + t * x1, where x1 ~ N(0, I).
+
+    Shared base: common training utilities + basic ODE sampler.
     """
 
     order = 1
 
-    @register_to_config
     def __init__(
         self,
         num_train_timesteps: int = 1000,
         prediction_type: str = "flow",
+        t_m: float = 0.0,
+        t_s: float = 1.0,
     ):
+        super().__init__()
         self.init_noise_sigma = 1.0
         self.num_inference_steps = None
         self.timesteps = None
+        self.num_train_timesteps = num_train_timesteps
+        self.prediction_type = prediction_type
+        self.t_m = t_m
+        self.t_s = t_s
 
     def set_timesteps(
         self,
@@ -104,6 +110,20 @@ class FlowMatchingScheduler(SchedulerMixin, ConfigMixin):
         """
         return noise - sample
 
+    def sample_timesteps(
+        self,
+        shape,
+        device: torch.device,
+        dtype: torch.dtype,
+    ) -> torch.Tensor:
+        """
+        Sample timesteps with a logit-normal distribution.
+
+        Reference: https://arxiv.org/pdf/2403.03206
+        """
+        u = torch.randn(shape, device=device, dtype=dtype) * self.t_s + self.t_m
+        return torch.sigmoid(u)
+
     def step(
         self,
         model_output: torch.Tensor,
@@ -144,3 +164,77 @@ class FlowMatchingScheduler(SchedulerMixin, ConfigMixin):
         if index == timesteps.shape[0] - 1:
             return torch.tensor(0.0, device=timesteps.device, dtype=timesteps.dtype)
         return timesteps[index + 1]
+
+    def forward(self, model_fn, sample: torch.Tensor) -> torch.Tensor:
+        """
+        ODE sampler entry point. Expects `set_timesteps(...)` to be called first.
+        """
+        if self.timesteps is None:
+            raise RuntimeError("set_timesteps(...) must be called before sampling.")
+
+        timesteps = self.timesteps
+        if self.prediction_type == "flow":
+            timesteps_model = timesteps * 1000.0
+        else:
+            timesteps_model = timesteps
+
+        for t, t_model in zip(timesteps, timesteps_model):
+            t_in = t_model.repeat(sample.shape[0]).to(sample)
+            model_output = model_fn(sample, t_in)
+            sample = self.step(model_output, t, sample).prev_sample
+        return sample
+
+
+class FlowMatchingSchedulerDiT(FlowMatchingBase):
+    def get_losses(self, model, x0_seq, labels) -> torch.Tensor:
+        bsz = x0_seq.shape[0]
+        noise = torch.randn_like(x0_seq)
+        timesteps = self.sample_timesteps(bsz, device=x0_seq.device, dtype=x0_seq.dtype)
+
+        x_noisy = self.add_noise(x0_seq, noise, timesteps)
+        velocity = self.get_velocity(x0_seq, noise, timesteps)
+        timesteps_model = timesteps * 1000.0 if self.prediction_type == "flow" else timesteps
+        timesteps_model = timesteps_model.to(dtype=x0_seq.dtype)
+
+        model_output = model(x_noisy, timesteps_model, y=labels)
+        return F.mse_loss(model_output.float(), velocity.float())
+
+
+class FlowMatchingSchedulerTransformer(FlowMatchingBase):
+    def __init__(self, *args, batch_mul: int = 1, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.batch_mul = batch_mul
+
+    def get_losses(self, model, x0_seq, labels) -> torch.Tensor:
+        bsz, seq_len, latent_size = x0_seq.shape
+        noise = torch.randn(
+            (bsz * self.batch_mul * seq_len, latent_size),
+            device=x0_seq.device,
+            dtype=x0_seq.dtype,
+        )
+        timesteps = self.sample_timesteps(
+            bsz * self.batch_mul * seq_len,
+            device=x0_seq.device,
+            dtype=x0_seq.dtype,
+        )
+
+        x0_rep = x0_seq.repeat_interleave(self.batch_mul, dim=0).reshape(-1, latent_size)
+        x_noisy = self.add_noise(x0_rep, noise, timesteps)
+        velocity = self.get_velocity(x0_rep, noise, timesteps)
+
+        x_noisy, noise, velocity = [
+            x.reshape(bsz * self.batch_mul, seq_len, latent_size)
+            for x in (x_noisy, noise, velocity)
+        ]
+        timesteps = timesteps.reshape(bsz * self.batch_mul, seq_len)
+        timesteps_model = timesteps * 1000.0 if self.prediction_type == "flow" else timesteps
+        timesteps_model = timesteps_model.to(dtype=x0_seq.dtype)
+
+        model_output = model(
+            x_noisy,
+            timesteps_model,
+            x_start=x0_seq,
+            y=labels,
+            batch_mul=self.batch_mul,
+        )
+        return F.mse_loss(model_output.float(), velocity.float())
