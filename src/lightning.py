@@ -4,8 +4,12 @@ import lightning as L
 
 from diffusers.optimization import get_scheduler
 
-from .models import All_models, DiT, Transformer
-from .flow_matching import FlowMatchingSchedulerDiT, FlowMatchingSchedulerTransformer
+from .models import All_models, DiT, Transformer, AR_DiT
+from .flow_matching import (
+    FlowMatchingSchedulerDiT,
+    FlowMatchingSchedulerTransformer,
+    FlowMatchingSchedulerARDiff,
+)
 from .tokenizer_models.vae import DiagonalGaussianDistribution
 from .utils import image_to_sequence
 
@@ -47,6 +51,12 @@ class LitModule(L.LightningModule):
             )
         elif isinstance(self.model, DiT):
             self.noise_scheduler = FlowMatchingSchedulerDiT(
+                prediction_type=prediction_type,
+                t_m=t_m,
+                t_s=t_s,
+            )
+        elif isinstance(self.model, AR_DiT):
+            self.noise_scheduler = FlowMatchingSchedulerARDiff(
                 prediction_type=prediction_type,
                 t_m=t_m,
                 t_s=t_s,
