@@ -84,7 +84,7 @@ if __name__ == "__main__":
     p.add_argument("--num-classes", type=int, default=1000)
     p.add_argument("--dropout", type=float, default=0.0)
     p.add_argument("--prediction-type", type=str, default="flow")
-    p.add_argument("--batch-mul", type=int, default=4)
+    p.add_argument("--batch-mul", type=int, default=2)
 
     p.add_argument("--batch-size", type=int, default=32)
     p.add_argument("--epochs", type=int, default=100)
