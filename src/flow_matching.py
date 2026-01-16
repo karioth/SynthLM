@@ -283,56 +283,61 @@ class FlowMatchingSchedulerARDiff(FlowMatchingBase):
         if t_start is not None:
             self.t_start = float(t_start)
 
+    @torch.compile
     def sample_monotone_anchor_times(
         self,
+        B: int,
         L: int,
-        device=None,
-        dtype: torch.dtype = torch.float32,
-    ) -> Tuple[torch.Tensor, int, torch.Tensor]:
+        device: torch.device,
+        dtype: torch.dtype,
+    ) -> torch.Tensor:
         """
-        Continuous monotone timestep sampler (anchor + logit-normal).
+        Continuous monotone timestep sampler (anchor + logit-normal), batched.
 
         Returns:
-          u: (L,) tensor with 0 <= u[0] <= ... <= u[L-1] <= 1
-          k: anchor index (python int)
-          a: anchor timestep value (scalar tensor)
+          u: (B, L) tensor with 0 <= u[...,0] <= ... <= u[...,L-1] <= 1
+
+        Main idea:
+          1) Pick an anchor index k uniformly for each batch element.
+          2) Pick an anchor time a from logit-normal.
+          3) Sample exactly k values in [0, a] and L-1-k values in [a, 1].
+          4) Sort the (L-1) values and insert the anchor at position k.
         """
-        device = device or torch.device("cpu")
+        # 1) Anchor positions
+        k = torch.randint(0, L, (B,), device=device)
 
-        # 1) Anchor position
-        k_t = torch.randint(0, L, size=(), device=device)
-        k = int(k_t.item())
+        # 2) Anchor values (logit-normal)
+        a = torch.sigmoid(torch.randn((B,), device=device, dtype=dtype) * self.t_s + self.t_m)
 
-        # 2) Anchor value (logit-normal)
-        a = torch.sigmoid(torch.randn((), device=device, dtype=dtype) * self.t_s + self.t_m)
+        Lm1 = L - 1
+        j = torch.arange(Lm1, device=device)[None, :]
+        prefix = j < k[:, None]
 
-        u = torch.empty((L,), device=device, dtype=dtype)
-        u[k] = a
+        # 3) Prefix in [0, a], suffix in [a, 1]
+        r = torch.rand((B, Lm1), device=device, dtype=dtype)
+        z = torch.where(
+            prefix,
+            r * a[:, None],
+            a[:, None] + r * (1.0 - a)[:, None],
+        )
 
-        # 3) Prefix (<= a), then sort to enforce monotonicity
-        if k > 0:
-            prefix = torch.rand((k,), device=device, dtype=dtype) * a  # in [0, a]
-            prefix, _ = torch.sort(prefix)
-            u[:k] = prefix
+        # 4) Sort and insert anchor to make the sequence monotone
+        z_sorted, _ = z.sort(dim=1)
 
-        # 4) Suffix (>= a), then sort to enforce monotonicity
-        n_after = L - (k + 1)
-        if n_after > 0:
-            suffix = a + torch.rand((n_after,), device=device, dtype=dtype) * (1.0 - a)  # in [a, 1]
-            suffix, _ = torch.sort(suffix)
-            u[k + 1:] = suffix
-
-        return u, k, a
+        u = torch.empty((B, L), device=device, dtype=dtype)
+        pos = torch.arange(L, device=device)[None, :].expand(B, -1)
+        mask = pos != k[:, None]
+        u[mask] = z_sorted.reshape(-1)
+        u.scatter_(1, k[:, None], a[:, None])
+        
+        return u
 
     def get_losses(self, model, x0_seq, labels) -> torch.Tensor:
         bsz, seq_len = x0_seq.shape[:2]
         noise = torch.randn_like(x0_seq)
-        t_vec = torch.empty((bsz, seq_len), device=x0_seq.device, dtype=x0_seq.dtype)
-        for b in range(bsz):
-            u, _, _ = self.sample_monotone_anchor_times(
-                seq_len, device=x0_seq.device, dtype=x0_seq.dtype
-            )
-            t_vec[b] = u
+        t_vec = self.sample_monotone_anchor_times(
+            bsz, seq_len, device=x0_seq.device, dtype=x0_seq.dtype
+        )
 
         x_noisy = self.add_noise(x0_seq, noise, t_vec)
         velocity = self.get_velocity(x0_seq, noise, t_vec)
@@ -466,31 +471,28 @@ class FlowMatchingSchedulerARDiff(FlowMatchingBase):
             valid_s, valid_e = self.valid_intervals[i]
             x_slice = sample[:, valid_s:valid_e, ...]
 
-            t_cur = self.timestep_matrix[i][valid_s:valid_e].to(sample.device)
-            step_index = self.step_index[i][valid_s:valid_e].to(sample.device)
-            update_mask = self.update_masks[i][valid_s:valid_e].to(sample.device)
+            t_cur_f = self.timestep_matrix[i][valid_s:valid_e]
+            step_index = self.step_index[i][valid_s:valid_e]
+            update_mask = self.update_masks[i][valid_s:valid_e]
 
-            update_mask = update_mask.unsqueeze(0)
-            while update_mask.dim() < x_slice.dim():
-                update_mask = update_mask.unsqueeze(-1)
             update_mask = update_mask.to(dtype=x_slice.dtype)
+            update_mask = update_mask.view(
+                (1, update_mask.shape[0]) + (1,) * (x_slice.dim() - 2)
+            )
 
             # Map step indices to actual timesteps; newly-activated frames step from t_start.
             prev_index = torch.clamp(step_index - 1, min=0)
-            t_prev = self.step_template_full.to(sample.device)[prev_index]
+            t_prev_f = self.step_template_full[prev_index]
 
-            t_prev = t_prev.unsqueeze(0).expand(x_slice.shape[0], -1)
-            t_cur = t_cur.unsqueeze(0).expand(x_slice.shape[0], -1)
-
+            t_prev = t_prev_f.unsqueeze(0).expand(x_slice.shape[0], -1)
             t_prev_model = t_prev * 1000.0
             model_output = model_fn(x_slice, t_prev_model)
 
             # Freeze frames whose timestep did not change.
             model_output = model_output * update_mask + x_slice * (1 - update_mask)
 
-            dt = (t_cur - t_prev).to(dtype=x_slice.dtype)
-            while dt.dim() < x_slice.dim():
-                dt = dt.unsqueeze(-1)
+            dt = (t_cur_f - t_prev_f).to(dtype=x_slice.dtype)
+            dt = dt.view((1, dt.shape[0]) + (1,) * (x_slice.dim() - 2))
             dt = dt * update_mask
             x_slice = x_slice + dt * model_output
 
