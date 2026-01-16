@@ -122,6 +122,12 @@ class FlowMatchingBase(nn.Module):
         u = torch.randn(shape, device=device, dtype=dtype) * self.t_s + self.t_m
         return torch.sigmoid(u)
 
+    def configure_sampling(self, **kwargs) -> None:
+        """
+        Optional hook for sampling-time overrides (no-op by default).
+        """
+        return None
+
     def step(
         self,
         model_output: torch.Tensor,
@@ -263,6 +269,19 @@ class FlowMatchingSchedulerARDiff(FlowMatchingBase):
         self.update_masks = None
         self.valid_intervals = None
         self._schedule_frames = None
+
+    def configure_sampling(
+        self,
+        ardiff_step: Optional[int] = None,
+        base_num_frames: Optional[int] = None,
+        t_start: Optional[float] = None,
+    ) -> None:
+        if ardiff_step is not None:
+            self.ardiff_step = ardiff_step
+        if base_num_frames is not None:
+            self.base_num_frames = base_num_frames
+        if t_start is not None:
+            self.t_start = float(t_start)
 
     def sample_monotone_anchor_times(
         self,

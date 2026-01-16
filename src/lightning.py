@@ -131,6 +131,8 @@ class LitModule(L.LightningModule):
         cfg_scale: float = 4.0,
         num_inference_steps: int = 250,
         scheduler=None,
+        ardiff_step: int = None,
+        base_num_frames: int = None,
     ):
         self.eval()
         if scheduler is None:
@@ -144,6 +146,10 @@ class LitModule(L.LightningModule):
         y_null = torch.full_like(class_labels, self.hparams.num_classes, device=self.device)
         y = torch.cat([class_labels, y_null], 0)
 
+        scheduler.configure_sampling(
+            ardiff_step=ardiff_step,
+            base_num_frames=base_num_frames,
+        )
         scheduler.set_timesteps(num_inference_steps, device=self.device)
         latents = self.model.sample_with_cfg(y, cfg_scale, scheduler)
         return self.unnormalize_latents(latents)

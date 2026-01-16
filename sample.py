@@ -24,6 +24,8 @@ def parse_args():
     parser.add_argument("--cfg-scale", type=float, default=3.0)
     parser.add_argument("--num_inference_steps", type=int, default=20)
     parser.add_argument("--batch_size", type=int, default=32)
+    parser.add_argument("--ardiff_step", type=int, default=None)
+    parser.add_argument("--base_num_frames", type=int, default=None)
     parser.add_argument("--num_images", type=int, default=None, help="Sample N random classes.")
     parser.add_argument("--class_labels", type=str, default=None, help="Comma-separated class list.")
     parser.add_argument("--output_dir", type=str, default="visuals")
@@ -122,6 +124,8 @@ def main():
                     batch_labels,
                     cfg_scale=args.cfg_scale,
                     num_inference_steps=args.num_inference_steps,
+                    ardiff_step=args.ardiff_step,
+                    base_num_frames=args.base_num_frames,
                 )
             end.record()
             torch.cuda.synchronize()
@@ -138,6 +142,8 @@ def main():
                     batch_labels,
                     cfg_scale=args.cfg_scale,
                     num_inference_steps=args.num_inference_steps,
+                    ardiff_step=args.ardiff_step,
+                    base_num_frames=args.base_num_frames,
                 )
             elapsed = time.time() - start
             images = args.speed_iters * args.batch_size
@@ -170,6 +176,8 @@ def main():
             batch_labels_tensor,
             cfg_scale=args.cfg_scale,
             num_inference_steps=args.num_inference_steps,
+            ardiff_step=args.ardiff_step,
+            base_num_frames=args.base_num_frames,
         )
         images = vae.decode(sequence_to_image(latents))
 
