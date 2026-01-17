@@ -29,7 +29,7 @@ class Block(nn.Module):
         rope_scale_base: float | None = None,
     ) -> None:
         super().__init__()
-        self.norm1 = RMSNorm(hidden_size, elementwise_affine=False, eps=1e-6)
+        self.norm1 = RMSNorm(hidden_size, elementwise_affine=True, eps=1e-6)
         self.attn = Attention(
             hidden_size,
             num_heads=num_heads,
@@ -41,7 +41,7 @@ class Block(nn.Module):
             rope_interleaved=rope_interleaved,
             rope_scale_base=rope_scale_base,
         )
-        self.norm2 = RMSNorm(hidden_size, elementwise_affine=False, eps=1e-6)
+        self.norm2 = RMSNorm(hidden_size, elementwise_affine=True, eps=1e-6)
         self.mlp = SwiGLU(hidden_size, intermediate_size)
 
     def forward(self, hidden_states: torch.Tensor, inference_params=None) -> torch.Tensor:
