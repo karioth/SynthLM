@@ -120,7 +120,7 @@ class Transformer(nn.Module):
         self.seq_len = seq_len
 
         if intermediate_size is None:
-            intermediate_size = int(hidden_size * 8 / 3 / 64) * 64
+            intermediate_size = int(hidden_size * 7 / 3 / 64) * 64
         if diffusion_intermediate_size is None:
             diffusion_intermediate_size = intermediate_size
 
