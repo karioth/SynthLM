@@ -44,8 +44,8 @@ class Attention(nn.Module):
         self.qkvg = nn.Linear(self.hidden_size, proj_out, bias=False)
         self.out_proj = nn.Linear(self.hidden_size, self.hidden_size, bias=False)
 
-        self.q_norm = RMSNorm(hidden_size=self.head_size, elementwise_affine=False)
-        self.k_norm = RMSNorm(hidden_size=self.head_size, elementwise_affine=False)
+        self.q_norm = RMSNorm(hidden_size=self.head_size)
+        self.k_norm = RMSNorm(hidden_size=self.head_size)
 
         self.rotary = RotaryEmbedding(
             dim=self.head_size,
