@@ -5,7 +5,7 @@ import torch
 import os
 from lightning.pytorch.callbacks import WeightAveraging
 from torch.optim.swa_utils import get_ema_avg_fn
-from .tokenizer_models import AutoencoderKL
+from .models.modules.vae import AutoencoderKL
 
 def center_crop_arr(pil_image, image_size):
     """

@@ -10,7 +10,7 @@ from .flow_matching import (
     FlowMatchingSchedulerTransformer,
     FlowMatchingSchedulerARDiff,
 )
-from .tokenizer_models.vae import DiagonalGaussianDistribution
+from .models.modules.vae import DiagonalGaussianDistribution
 from .utils import image_to_sequence
 
 
