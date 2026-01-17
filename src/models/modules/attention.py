@@ -16,8 +16,8 @@ class Attention(nn.Module):
         self,
         hidden_size: int,
         num_heads: int,
-        num_kv_heads: int | None = None,
         layer_idx: int,
+        num_kv_heads: int | None = None,
         rope_theta: float = 10000.0,
         rope_interleaved: bool = False,
         rope_scale_base: float | None = None,
@@ -114,9 +114,17 @@ class Attention(nn.Module):
 
         # RoPE on just the new chunk using offset (flash packed-QKV path).
         start = 0 if inference_params is None else int(inference_params.seqlen_offset)
-        qkv_new = torch.cat([q, k_new, v_new], dim=2)  # (B, L, Hq+2Hkv, Dh)
-        qkv_new = self.rotary(qkv_new, seqlen_offset=start, num_heads_q=self.num_heads)
-        q, k_new, v_new = torch.split(qkv_new, [self.num_heads, self.num_kv_heads, self.num_kv_heads], dim=2)
+        # flash-attn 2.6.x expects (B, S, 3, H, D). Upgrade to use 4D packed QKV + num_heads_q.
+        # qkv_new = torch.cat([q, k_new, v_new], dim=2)  # (B, L, Hq+2Hkv, Dh)
+        # qkv_new = self.rotary(qkv_new, seqlen_offset=start, num_heads_q=self.num_heads)
+        # q, k_new, v_new = torch.split(
+        #     qkv_new,
+        #     [self.num_heads, self.num_kv_heads, self.num_kv_heads],
+        #     dim=2,
+        # )
+        qkv_new = torch.stack([q, k_new, v_new], dim=2)  # (B, L, 3, H, Dh)
+        qkv_new = self.rotary(qkv_new, seqlen_offset=start)
+        q, k_new, v_new = qkv_new.unbind(dim=2)
 
         if inference_params is not None:
             kv_new = torch.stack([k_new, v_new], dim=2)   # (B, L, 2, Hkv, Dh)

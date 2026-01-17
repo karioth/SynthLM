@@ -30,7 +30,6 @@ def main(args):
         input_size=args.input_size,
         latent_size=args.latent_size,
         num_classes=args.num_classes,
-        dropout=args.dropout,
         prediction_type=args.prediction_type,
         batch_mul=args.batch_mul,
         lr=args.lr,
@@ -82,7 +81,6 @@ if __name__ == "__main__":
     p.add_argument("--input-size", type=int, required=True)
     p.add_argument("--latent-size", type=int, required=True)
     p.add_argument("--num-classes", type=int, default=1000)
-    p.add_argument("--dropout", type=float, default=0.0)
     p.add_argument("--prediction-type", type=str, default="flow")
     p.add_argument("--batch-mul", type=int, default=2)
 

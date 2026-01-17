@@ -21,7 +21,6 @@ class LitModule(L.LightningModule):
         input_size: int = 32,
         latent_size: int = 16,
         num_classes: int = 1000,
-        dropout: float = 0.0,
         prediction_type: str = "flow",
         t_m: float = 0.0,
         t_s: float = 1.0,
@@ -39,7 +38,6 @@ class LitModule(L.LightningModule):
             seq_len=seq_len,
             in_channels=latent_size,
             num_classes=num_classes,
-            drop=dropout,
         )
 
         if isinstance(self.model, Transformer):
