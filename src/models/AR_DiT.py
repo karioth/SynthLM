@@ -10,7 +10,7 @@ except ImportError:
     print("flash_attn2 not found")
 
 from .DiT import LabelEmbedder, TimestepEmbedder, FinalLayer, SwiGLU, modulate
-from .kernel.rotary import apply_rotary_pos_emb as apply_rotary_emb
+from .rotary_torch import apply_rotary_pos_emb as apply_rotary_emb
 from .RMSNorm import RMSNorm
 
 def repeat_kv(x: torch.Tensor, n_rep: int) -> torch.Tensor:
