@@ -94,7 +94,7 @@ class AR_DiT(nn.Module):
         self.seq_len = seq_len
 
         if intermediate_size is None:
-            intermediate_size = int(round(hidden_size * 8 / 3 / 64)) * 64 # 4x ratio in regular MLP but 2.6ish for swiglu
+            intermediate_size = int(hidden_size * 8 / 3 / 64) * 64 # 4x ratio in regular MLP but 2.6ish for swiglu
 
         self.input_embedder = nn.Linear(in_channels, hidden_size, bias=False)
         self.time_embedder = TimestepEmbedder(hidden_size)
