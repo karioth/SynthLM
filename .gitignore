@@ -13,7 +13,7 @@ __pycache__/
 *.sh
 lightning_logs/
 wandb/
-logs/
+logs*/
 
 # Experiment outputs
 results*/
