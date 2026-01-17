@@ -120,7 +120,7 @@ class Transformer(nn.Module):
         self.seq_len = seq_len
 
         if intermediate_size is None:
-            intermediate_size = int(hidden_size * 7 / 3 / 64) * 64
+            intermediate_size = int(hidden_size * 10 / 3 / 64) * 64
         if diffusion_intermediate_size is None:
             diffusion_intermediate_size = intermediate_size
 
@@ -290,25 +290,77 @@ class Transformer(nn.Module):
 
 
 def Transformer_XL(**kwargs) -> Transformer:
-    return Transformer(depth=24, hidden_size=2048, num_heads=16, **kwargs)
+    return Transformer(
+        depth=24,
+        hidden_size=2048,
+        num_heads=16,
+        intermediate_size=8192,
+        diffusion_intermediate_size=8192,
+        **kwargs,
+    )
 
 def Transformer_Large(**kwargs) -> Transformer:
-    return Transformer(depth=24, hidden_size=1536, num_heads=12, **kwargs)
+    return Transformer(
+        depth=24,
+        hidden_size=1536,
+        num_heads=12,
+        intermediate_size=6144,
+        diffusion_intermediate_size=6144,
+        **kwargs,
+    )
 
 def Transformer_Medium(**kwargs) -> Transformer:
-    return Transformer(depth=24, hidden_size=1024, num_heads=16, **kwargs)
+    return Transformer(
+        depth=24,
+        hidden_size=1024,
+        num_heads=16,
+        intermediate_size=3456,
+        diffusion_intermediate_size=3456,
+        **kwargs,
+    )
 
 def Transformer_Base(**kwargs) -> Transformer:
-    return Transformer(depth=12, hidden_size=768, num_heads=12, **kwargs)
+    return Transformer(
+        depth=12,
+        hidden_size=768,
+        num_heads=12,
+        intermediate_size=3072,
+        diffusion_intermediate_size=3072,
+        **kwargs,
+    )
 
 def Transformer_H(**kwargs) -> Transformer:
-    return Transformer(depth=40, hidden_size=1280, num_heads=20, diffusion_depth=12, **kwargs)
+    return Transformer(
+        depth=40,
+        hidden_size=1280,
+        num_heads=20,
+        diffusion_depth=12,
+        intermediate_size=5120,
+        diffusion_intermediate_size=5120,
+        **kwargs,
+    )
 
 def Transformer_L(**kwargs) -> Transformer:
-    return Transformer(depth=32, hidden_size=1024, num_heads=16, diffusion_depth=8, **kwargs)
+    return Transformer(
+        depth=32,
+        hidden_size=1024,
+        num_heads=16,
+        diffusion_depth=8,
+        intermediate_size=4096,
+        diffusion_intermediate_size=4096,
+        **kwargs,
+    )
 
 def Transformer_B(**kwargs) -> Transformer:
-    return Transformer(depth=24, hidden_size=768, num_heads=12, diffusion_depth=6, **kwargs)
+    return Transformer(
+        depth=24,
+        hidden_size=768,
+        num_heads=12,
+        diffusion_depth=6,
+        intermediate_size=3072,
+        diffusion_intermediate_size=3072,
+        **kwargs,
+    )
 
 
 Transformer_models = {

@@ -185,16 +185,16 @@ class DiT(nn.Module):
 #################################################################################
 
 def DiT_XL(**kwargs) -> DiT:
-    return DiT(depth=24, hidden_size=2048, num_heads=16, **kwargs)
+    return DiT(depth=24, hidden_size=2048, num_heads=16, intermediate_size=5440, **kwargs)
 
 def DiT_Large(**kwargs) -> DiT:
-    return DiT(depth=24, hidden_size=1536, num_heads=12, **kwargs)
+    return DiT(depth=24, hidden_size=1536, num_heads=12, intermediate_size=4096, **kwargs)
 
 def DiT_Medium(**kwargs) -> DiT:
-    return DiT(depth=24, hidden_size=1024, num_heads=16, **kwargs)
+    return DiT(depth=24, hidden_size=1024, num_heads=16, intermediate_size=2432, **kwargs)
 
 def DiT_Base(**kwargs) -> DiT:
-    return DiT(depth=12, hidden_size=768, num_heads=12, **kwargs)
+    return DiT(depth=12, hidden_size=768, num_heads=12, intermediate_size=2048, **kwargs)
 
 DiT_models = {
     "DiT-XL": DiT_XL,
