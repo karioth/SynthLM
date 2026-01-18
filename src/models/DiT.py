@@ -5,7 +5,7 @@ import torch.nn as nn
 
 from .modules.attention import Attention
 from .modules.norms import RMSNorm
-from .modules.adaln import AdaLNzero, modulate, FinalLayer
+from .modules.adaln import AdaLNzero, modulate, gate, FinalLayer
 from .modules.embeddings import TimestepEmbedder, LabelEmbedder
 from .modules.ffn import SwiGLU
 
@@ -49,12 +49,19 @@ class DiTBlock(nn.Module):
     def forward(self, hidden_states: torch.Tensor, time_modulation: torch.Tensor) -> torch.Tensor:
         biases = self.scale_shift_table[None] + time_modulation.reshape(time_modulation.size(0), 6, -1)
         shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = biases.chunk(6, dim=1)
-        hidden_states = hidden_states + gate_msa * self.attn(
+        
+        residual = hidden_states
+        hidden_states = self.attn(
             modulate(self.norm1(hidden_states), shift_msa, scale_msa)
         )
-        hidden_states = hidden_states + gate_mlp * self.mlp(
+        hidden_states = residual + gate(hidden_states, gate_msa)
+
+        residual = hidden_states
+        hidden_states = self.mlp(
             modulate(self.norm2(hidden_states), shift_mlp, scale_mlp)
         )
+        hidden_states = residual + gate(hidden_states, gate_mlp)
+        
         return hidden_states
 
 

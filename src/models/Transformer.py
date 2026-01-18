@@ -6,7 +6,7 @@ from flash_attn.utils.generation import InferenceParams
 
 from .modules.attention import Attention
 from .modules.norms import RMSNorm
-from .modules.adaln import AdaLNzero, modulate, FinalLayer
+from .modules.adaln import AdaLNzero, modulate, gate, FinalLayer
 from .modules.embeddings import TimestepEmbedder, LabelEmbedder
 from .modules.ffn import SwiGLU
 
@@ -66,9 +66,13 @@ class MLPBlock(nn.Module):
 
     def forward(self, hidden_states: torch.Tensor, conditioning: torch.Tensor) -> torch.Tensor:
         shift_mlp, scale_mlp, gate_mlp = self.adaLN_modulation(conditioning).chunk(3, dim=-1)
-        hidden_states = hidden_states + gate_mlp * self.mlp(
+        
+        residual = hidden_states
+        hidden_states = self.mlp(
             modulate(self.norm(hidden_states), shift_mlp, scale_mlp)
         )
+        hidden_states = residual + gate(hidden_states, gate_mlp)
+        
         return hidden_states
 
 

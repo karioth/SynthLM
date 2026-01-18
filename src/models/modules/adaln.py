@@ -8,6 +8,10 @@ def modulate(hidden_states: torch.Tensor, shift: torch.Tensor, scale: torch.Tens
     return hidden_states * (1 + scale) + shift
 
 
+def gate(hidden_states: torch.Tensor, gate: torch.Tensor) -> torch.Tensor:
+    return hidden_states * gate
+
+
 class AdaLNzero(nn.Module):
     """
     AdaLNzero modulation MLP that outputs a configurable multiple of hidden_size.
