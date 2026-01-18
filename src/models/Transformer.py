@@ -45,11 +45,17 @@ class Block(nn.Module):
         self.mlp = SwiGLU(hidden_size, intermediate_size)
 
     def forward(self, hidden_states: torch.Tensor, inference_params=None) -> torch.Tensor:
-        hidden_states = hidden_states + self.attn(
+        residual = hidden_states
+        hidden_states = self.attn(
             self.norm1(hidden_states),
             inference_params=inference_params,
         )
-        hidden_states = hidden_states + self.mlp(self.norm2(hidden_states))
+        hidden_states = residual + hidden_states
+
+        residual = hidden_states
+        hidden_states = self.mlp(self.norm2(hidden_states))
+        hidden_states = residual + hidden_states
+        
         return hidden_states
 
 
