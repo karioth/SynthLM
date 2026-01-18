@@ -51,13 +51,11 @@ class AR_DiTBlock(nn.Module):
         time_modulation: torch.Tensor,
         inference_params=None,
     ) -> torch.Tensor:
-        biases = self.scale_shift_table[None, None] + time_modulation.reshape(
-            time_modulation.size(0),
-            time_modulation.size(1),
-            6,
-            -1,
-        )
-        shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = biases.unbind(dim=2)
+
+        # time_modulation: (B, T, 6D) bf16 under autocast
+        bias = self.scale_shift_table.reshape(1, 1, -1)  # (1,1,6D) bf16
+        biases = time_modulation + bias                                                  # (B,T,6D) bf16
+        shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = biases.to(dtype=hidden_states.dtype).chunk(6, dim=-1)
 
         residual = hidden_states
         hidden_states = self.attn(
@@ -166,14 +164,12 @@ class AR_DiT(nn.Module):
 
         hidden_states = self.input_embedder(hidden_states)  # (B, T, D)
         label_emb = self.label_embedder(labels, self.training)   # (B, D)
-
         timesteps = timesteps.contiguous()
         time_emb = self.time_embedder(timesteps.view(-1)).view(
             hidden_states.size(0),
             hidden_states.size(1),
             -1,
         )  # (B, T, D)
-
         # Class token is not time-modulated (AR-Diffusion style).
         t_cls = torch.zeros(
             hidden_states.size(0),
@@ -246,7 +242,7 @@ def AR_DiT_Large(**kwargs) -> AR_DiT:
     return AR_DiT(depth=24, hidden_size=1536, num_heads=12, intermediate_size=4096, **kwargs)
 
 def AR_DiT_Medium(**kwargs) -> AR_DiT:
-    return AR_DiT(depth=24, hidden_size=1024, num_heads=16, intermediate_size=2432, **kwargs)
+    return AR_DiT(depth=24, hidden_size=1024, num_heads=16, intermediate_size=3584, **kwargs)
 
 def AR_DiT_Base(**kwargs) -> AR_DiT:
     return AR_DiT(depth=12, hidden_size=768, num_heads=12, intermediate_size=2048, **kwargs)

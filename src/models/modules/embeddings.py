@@ -100,4 +100,8 @@ class LabelEmbedder(nn.Module):
         if (train and use_dropout) or (force_drop_ids is not None):
             labels = self.token_drop(labels, force_drop_ids)
         embeddings = self.embedding_table(labels)
+
+        if torch.is_autocast_enabled():
+            # CUDA autocast dtype (bf16/fp16 depending on your autocast context)
+            embeddings = embeddings.to(torch.get_autocast_gpu_dtype())
         return embeddings

@@ -48,8 +48,11 @@ class DiTBlock(nn.Module):
         self.scale_shift_table._no_weight_decay = True
 
     def forward(self, hidden_states: torch.Tensor, time_modulation: torch.Tensor) -> torch.Tensor:
-        biases = self.scale_shift_table[None] + time_modulation.reshape(time_modulation.size(0), 6, -1)
-        shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = biases.chunk(6, dim=1)
+        bias = self.scale_shift_table.reshape(1, -1)
+        biases = time_modulation + bias
+        shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = (
+            biases.to(dtype=hidden_states.dtype).chunk(6, dim=-1)
+        )
         
         residual = hidden_states
         hidden_states = self.attn(
