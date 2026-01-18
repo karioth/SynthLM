@@ -43,6 +43,7 @@ class AR_DiTBlock(nn.Module):
         self.norm2 = RMSNorm(hidden_size, elementwise_affine=True, eps=1e-6)
         self.mlp = SwiGLU(hidden_size, intermediate_size)
         self.scale_shift_table = nn.Parameter(torch.zeros(6, hidden_size))
+        self.scale_shift_table._no_weight_decay = True
 
     def forward(
         self,

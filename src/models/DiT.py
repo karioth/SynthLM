@@ -45,6 +45,7 @@ class DiTBlock(nn.Module):
 
         self.mlp = SwiGLU(hidden_size, intermediate_size)
         self.scale_shift_table = nn.Parameter(torch.zeros(6, hidden_size))
+        self.scale_shift_table._no_weight_decay = True
 
     def forward(self, hidden_states: torch.Tensor, time_modulation: torch.Tensor) -> torch.Tensor:
         biases = self.scale_shift_table[None] + time_modulation.reshape(time_modulation.size(0), 6, -1)

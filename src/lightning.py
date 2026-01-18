@@ -157,7 +157,7 @@ class LitModule(L.LightningModule):
         for n, p in self.model.named_parameters():
             if not p.requires_grad:
                 continue
-            if p.ndim == 1 or n.endswith(".bias"):
+            if p.ndim == 1 or n.endswith(".bias") or getattr(p, "_no_weight_decay", False):
                 no_decay.append(p)   # RMSNorm/LN weights, biases, scalars
             else:
                 decay.append(p)      # linear/conv weights, embedding matrices, etc.
