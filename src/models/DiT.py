@@ -44,9 +44,7 @@ class DiTBlock(nn.Module):
         self.norm2 = RMSNorm(hidden_size, elementwise_affine=True, eps=1e-6)
 
         self.mlp = SwiGLU(hidden_size, intermediate_size)
-        self.scale_shift_table = nn.Parameter(
-            torch.randn(6, hidden_size) / (hidden_size**0.5),
-        )
+        self.scale_shift_table = nn.Parameter(torch.zeros(6, hidden_size))
 
     def forward(self, hidden_states: torch.Tensor, time_modulation: torch.Tensor) -> torch.Tensor:
         biases = self.scale_shift_table[None] + time_modulation.reshape(time_modulation.size(0), 6, -1)

@@ -28,7 +28,7 @@ class AR_DiTBlock(nn.Module):
         rope_scale_base: float | None = None,
     ) -> None:
         super().__init__()
-        self.norm1 = RMSNorm(hidden_size, elementwise_affine=False, eps=1e-6)
+        self.norm1 = RMSNorm(hidden_size, elementwise_affine=True, eps=1e-6)
         self.attn = Attention(
             hidden_size,
             num_heads=num_heads,
@@ -40,11 +40,9 @@ class AR_DiTBlock(nn.Module):
             rope_interleaved=rope_interleaved,
             rope_scale_base=rope_scale_base,
         )
-        self.norm2 = RMSNorm(hidden_size, elementwise_affine=False, eps=1e-6)
+        self.norm2 = RMSNorm(hidden_size, elementwise_affine=True, eps=1e-6)
         self.mlp = SwiGLU(hidden_size, intermediate_size)
-        self.scale_shift_table = nn.Parameter(
-            torch.randn(6, hidden_size) / (hidden_size**0.5),
-        )
+        self.scale_shift_table = nn.Parameter(torch.zeros(6, hidden_size))
 
     def forward(
         self,
