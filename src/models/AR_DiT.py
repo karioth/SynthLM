@@ -42,17 +42,23 @@ class AR_DiTBlock(nn.Module):
         )
         self.norm2 = RMSNorm(hidden_size, elementwise_affine=False, eps=1e-6)
         self.mlp = SwiGLU(hidden_size, intermediate_size)
-        self.adaLN_modulation = AdaLNzero(hidden_size=hidden_size, out_mult=6)
+        self.scale_shift_table = nn.Parameter(
+            torch.randn(6, hidden_size) / (hidden_size**0.5),
+        )
 
     def forward(
         self,
         hidden_states: torch.Tensor,
-        conditioning: torch.Tensor,
+        time_modulation: torch.Tensor,
         inference_params=None,
     ) -> torch.Tensor:
-        shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = (
-            self.adaLN_modulation(conditioning).chunk(6, dim=-1)
+        biases = self.scale_shift_table[None, None] + time_modulation.reshape(
+            time_modulation.size(0),
+            time_modulation.size(1),
+            6,
+            -1,
         )
+        shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = biases.unbind(dim=2)
         hidden_states = hidden_states + gate_msa * self.attn(
             modulate(self.norm1(hidden_states), shift_msa, scale_msa),
             inference_params=inference_params,
@@ -99,6 +105,7 @@ class AR_DiT(nn.Module):
         self.input_embedder = nn.Linear(in_channels, hidden_size, bias=False)
         self.time_embedder = TimestepEmbedder(hidden_size)
         self.label_embedder = LabelEmbedder(num_classes, hidden_size, class_dropout_prob)
+        self.time_modulation = AdaLNzero(hidden_size=hidden_size, out_mult=6)
 
         self.blocks = nn.ModuleList(
             [
@@ -169,16 +176,23 @@ class AR_DiT(nn.Module):
             device=time_emb.device,
             dtype=time_emb.dtype,
         )
-        conditioning = torch.cat([t_cls, time_emb], dim=1)  # (B, T+1, D)
+        time_modulation = self.time_modulation(time_emb)
+        t_cls_mod = torch.zeros(
+            hidden_states.size(0),
+            1,
+            time_modulation.size(-1),
+            device=time_modulation.device,
+            dtype=time_modulation.dtype,
+        )
+        time_modulation = torch.cat([t_cls_mod, time_modulation], dim=1)  # (B, T+1, 6D)
         hidden_states = torch.cat([label_emb.unsqueeze(1), hidden_states], dim=1)  # (B, T+1, D)
 
         for block in self.blocks:
-            hidden_states = block(hidden_states, conditioning, inference_params=inference_params)
+            hidden_states = block(hidden_states, time_modulation, inference_params=inference_params)
 
         # Remove conditioning token before the final layer.
         hidden_states = hidden_states[:, 1:, :]
-        conditioning = conditioning[:, 1:, :]
-        hidden_states = self.final_layer(hidden_states, conditioning)
+        hidden_states = self.final_layer(hidden_states, time_emb)
         return hidden_states
 
     def sample_with_cfg(self, labels: torch.Tensor, cfg_scale: float, sample_func) -> torch.Tensor:
