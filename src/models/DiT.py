@@ -11,7 +11,7 @@ from .modules.ffn import SwiGLU
 
 class DiTBlock(nn.Module):
     """
-    A DiT block with model-shared adaLN-Zero conditioning.
+    A DiT block with adaptive layer norm zero (adaLN-Zero) conditioning.
     """
 
     def __init__(
@@ -27,7 +27,7 @@ class DiTBlock(nn.Module):
         rope_scale_base: float | None = None,
     ) -> None:
         super().__init__()
-        self.norm1 = RMSNorm(hidden_size, elementwise_affine=True, eps=1e-6)
+        self.norm1 = RMSNorm(hidden_size, elementwise_affine=False, eps=1e-6)
 
         self.attn = Attention(
             hidden_size,
@@ -41,19 +41,15 @@ class DiTBlock(nn.Module):
             rope_scale_base=rope_scale_base,
         )
 
-        self.norm2 = RMSNorm(hidden_size, elementwise_affine=True, eps=1e-6)
+        self.norm2 = RMSNorm(hidden_size, elementwise_affine=False, eps=1e-6)
 
         self.mlp = SwiGLU(hidden_size, intermediate_size)
-        self.scale_shift_table = nn.Parameter(torch.zeros(6, hidden_size))
-        self.scale_shift_table._no_weight_decay = True
+        self.adaLN_modulation = AdaLNzero(hidden_size=hidden_size, out_mult=6)
 
-    def forward(self, hidden_states: torch.Tensor, time_modulation: torch.Tensor) -> torch.Tensor:
-        bias = self.scale_shift_table.reshape(1, -1)
-        biases = time_modulation + bias
+    def forward(self, hidden_states: torch.Tensor, conditioning: torch.Tensor) -> torch.Tensor:
         shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = (
-            biases.to(dtype=hidden_states.dtype).chunk(6, dim=-1)
+            self.adaLN_modulation(conditioning).chunk(6, dim=-1)
         )
-        
         residual = hidden_states
         hidden_states = self.attn(
             modulate(self.norm1(hidden_states), shift_msa, scale_msa)
@@ -65,7 +61,6 @@ class DiTBlock(nn.Module):
             modulate(self.norm2(hidden_states), shift_mlp, scale_mlp)
         )
         hidden_states = residual + gate(hidden_states, gate_mlp)
-        
         return hidden_states
 
 
@@ -102,7 +97,6 @@ class DiT(nn.Module):
         self.input_embedder = nn.Linear(in_channels, hidden_size, bias=False)
         self.time_embedder = TimestepEmbedder(hidden_size)
         self.label_embedder = LabelEmbedder(num_classes, hidden_size, class_dropout_prob)
-        self.time_modulation = AdaLNzero(hidden_size=hidden_size, out_mult=6)
 
         self.blocks = nn.ModuleList(
             [
@@ -150,13 +144,11 @@ class DiT(nn.Module):
         hidden_states = self.input_embedder(hidden_states)
         time_emb = self.time_embedder(timesteps)
         label_emb = self.label_embedder(labels, self.training)
-        time_modulation = self.time_modulation(time_emb)
-        hidden_states = torch.cat([label_emb.unsqueeze(1), hidden_states], dim=1)
+        conditioning = (time_emb + label_emb).unsqueeze(1)
 
         for block in self.blocks:
-            hidden_states = block(hidden_states, time_modulation)
-        hidden_states = hidden_states[:, 1:, :]
-        hidden_states = self.final_layer(hidden_states, time_emb)
+            hidden_states = block(hidden_states, conditioning)
+        hidden_states = self.final_layer(hidden_states, conditioning)
         return hidden_states
 
     def sample_with_cfg(self, labels: torch.Tensor, cfg_scale: float, sample_func) -> torch.Tensor:
