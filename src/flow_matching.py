@@ -177,10 +177,9 @@ class FlowMatchingBase(nn.Module):
             raise RuntimeError("set_timesteps(...) must be called before sampling.")
 
         timesteps = self.timesteps
-        timesteps_model = timesteps * 1000.0
 
-        for t, t_model in zip(timesteps, timesteps_model):
-            t_in = t_model.repeat(sample.shape[0]).to(sample)
+        for t in timesteps:
+            t_in = t.repeat(sample.shape[0]).to(sample)
             model_output = model_fn(sample, t_in)
             sample = self.step(model_output, t, sample).prev_sample
         return sample
@@ -194,10 +193,7 @@ class FlowMatchingSchedulerDiT(FlowMatchingBase):
 
         x_noisy = self.add_noise(x0_seq, noise, timesteps)
         velocity = self.get_velocity(x0_seq, noise, timesteps)
-        timesteps_model = timesteps * 1000.0 
-        timesteps_model = timesteps_model.to(dtype=x0_seq.dtype)
-
-        model_output = model(x_noisy, timesteps_model, y=labels)
+        model_output = model(x_noisy, timesteps, labels=labels)
         return F.mse_loss(model_output.float(), velocity.float())
 
 
@@ -228,14 +224,11 @@ class FlowMatchingSchedulerTransformer(FlowMatchingBase):
             for x in (x_noisy, noise, velocity)
         ]
         timesteps = timesteps.reshape(bsz * self.batch_mul, seq_len)
-        timesteps_model = timesteps * 1000.0 
-        timesteps_model = timesteps_model.to(dtype=x0_seq.dtype)
-
         model_output = model(
             x_noisy,
-            timesteps_model,
+            timesteps,
             x_start=x0_seq,
-            y=labels,
+            labels=labels,
             batch_mul=self.batch_mul,
         )
         return F.mse_loss(model_output.float(), velocity.float())
@@ -341,10 +334,7 @@ class FlowMatchingSchedulerARDiff(FlowMatchingBase):
 
         x_noisy = self.add_noise(x0_seq, noise, t_vec)
         velocity = self.get_velocity(x0_seq, noise, t_vec)
-        t_model = t_vec * 1000.0 
-        t_model = t_model.to(dtype=x0_seq.dtype)
-
-        model_output = model(x_noisy, t_model, y=labels)
+        model_output = model(x_noisy, t_vec, labels=labels)
         return F.mse_loss(model_output.float(), velocity.float())
 
     def set_timesteps(
@@ -485,8 +475,7 @@ class FlowMatchingSchedulerARDiff(FlowMatchingBase):
             t_prev_f = self.step_template_full[prev_index]
 
             t_prev = t_prev_f.unsqueeze(0).expand(x_slice.shape[0], -1)
-            t_prev_model = t_prev * 1000.0
-            model_output = model_fn(x_slice, t_prev_model)
+            model_output = model_fn(x_slice, t_prev)
 
             # Freeze frames whose timestep did not change.
             model_output = model_output * update_mask + x_slice * (1 - update_mask)

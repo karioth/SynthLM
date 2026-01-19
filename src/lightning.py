@@ -10,7 +10,7 @@ from .flow_matching import (
     FlowMatchingSchedulerTransformer,
     FlowMatchingSchedulerARDiff,
 )
-from .tokenizer_models.vae import DiagonalGaussianDistribution
+from .models.modules.vae import DiagonalGaussianDistribution
 from .utils import image_to_sequence
 
 
@@ -21,7 +21,6 @@ class LitModule(L.LightningModule):
         input_size: int = 32,
         latent_size: int = 16,
         num_classes: int = 1000,
-        dropout: float = 0.0,
         prediction_type: str = "flow",
         t_m: float = 0.0,
         t_s: float = 1.0,
@@ -39,7 +38,6 @@ class LitModule(L.LightningModule):
             seq_len=seq_len,
             in_channels=latent_size,
             num_classes=num_classes,
-            drop=dropout,
         )
 
         if isinstance(self.model, Transformer):
@@ -159,7 +157,7 @@ class LitModule(L.LightningModule):
         for n, p in self.model.named_parameters():
             if not p.requires_grad:
                 continue
-            if p.ndim == 1 or n.endswith(".bias"):
+            if p.ndim == 1 or n.endswith(".bias") or getattr(p, "_no_weight_decay", False):
                 no_decay.append(p)   # RMSNorm/LN weights, biases, scalars
             else:
                 decay.append(p)      # linear/conv weights, embedding matrices, etc.

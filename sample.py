@@ -1,6 +1,7 @@
 import argparse
 import os
 import random
+from contextlib import nullcontext
 from typing import List, Tuple
 
 import numpy as np
@@ -20,7 +21,20 @@ def parse_args():
     parser.add_argument("--vae", type=str, default=None, help="Path to VAE checkpoint.")
     parser.add_argument("--image_size", type=int, default=256)
     parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--mixed_precision", type=str, default="no", choices=["no", "fp16", "bf16"])
+    parser.add_argument(
+        "--precision",
+        type=str,
+        default="bf16-mixed",
+        choices=["bf16-mixed", "16-mixed", "32"],
+        help="Autocast precision (matches training defaults).",
+    )
+    parser.add_argument(
+        "--mixed_precision",
+        type=str,
+        default=None,
+        choices=["no", "fp16", "bf16"],
+        help="Deprecated: use --precision instead.",
+    )
     parser.add_argument("--cfg-scale", type=float, default=3.0)
     parser.add_argument("--num_inference_steps", type=int, default=20)
     parser.add_argument("--batch_size", type=int, default=32)
@@ -55,6 +69,28 @@ def get_dtype(mixed_precision: str, device: torch.device) -> torch.dtype:
     if mixed_precision == "fp16":
         return torch.float16
     return torch.float32
+
+
+def resolve_precision(args) -> str:
+    precision = args.precision
+    if args.mixed_precision is None:
+        return precision
+    mapping = {
+        "no": "32",
+        "fp16": "16-mixed",
+        "bf16": "bf16-mixed",
+    }
+    return mapping[args.mixed_precision]
+
+
+def get_autocast_dtype(precision: str, device: torch.device) -> torch.dtype | None:
+    if device.type != "cuda":
+        return None
+    if precision == "bf16-mixed":
+        return torch.bfloat16
+    if precision == "16-mixed":
+        return torch.float16
+    return None
 
 
 def parse_class_labels(arg: str) -> List[int]:
@@ -101,10 +137,16 @@ def main():
     torch.manual_seed(seed)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    dtype = get_dtype(args.mixed_precision, device)
+    precision = resolve_precision(args)
+    amp_dtype = get_autocast_dtype(precision, device)
+    autocast = (
+        torch.autocast(device_type=device.type, dtype=amp_dtype)
+        if amp_dtype is not None
+        else nullcontext()
+    )
 
     lit = LitModule.load_from_checkpoint(args.checkpoint, map_location="cpu")
-    lit.to(device=device, dtype=dtype)
+    lit.to(device=device)
     lit.eval()
 
     labels, indices = build_labels(args, lit.hparams.num_classes, rank, world_size)
@@ -120,13 +162,14 @@ def main():
             start.record()
             for _ in range(args.speed_iters):
                 batch_labels = torch.randint(0, lit.hparams.num_classes, (args.batch_size,), device=device)
-                _ = lit.sample_latents(
-                    batch_labels,
-                    cfg_scale=args.cfg_scale,
-                    num_inference_steps=args.num_inference_steps,
-                    ardiff_step=args.ardiff_step,
-                    base_num_frames=args.base_num_frames,
-                )
+                with autocast:
+                    _ = lit.sample_latents(
+                        batch_labels,
+                        cfg_scale=args.cfg_scale,
+                        num_inference_steps=args.num_inference_steps,
+                        ardiff_step=args.ardiff_step,
+                        base_num_frames=args.base_num_frames,
+                    )
             end.record()
             torch.cuda.synchronize()
             elapsed_ms = start.elapsed_time(end)
@@ -138,13 +181,14 @@ def main():
             start = time.time()
             for _ in range(args.speed_iters):
                 batch_labels = torch.randint(0, lit.hparams.num_classes, (args.batch_size,), device=device)
-                _ = lit.sample_latents(
-                    batch_labels,
-                    cfg_scale=args.cfg_scale,
-                    num_inference_steps=args.num_inference_steps,
-                    ardiff_step=args.ardiff_step,
-                    base_num_frames=args.base_num_frames,
-                )
+                with autocast:
+                    _ = lit.sample_latents(
+                        batch_labels,
+                        cfg_scale=args.cfg_scale,
+                        num_inference_steps=args.num_inference_steps,
+                        ardiff_step=args.ardiff_step,
+                        base_num_frames=args.base_num_frames,
+                    )
             elapsed = time.time() - start
             images = args.speed_iters * args.batch_size
             if rank == 0:
@@ -156,7 +200,7 @@ def main():
     if args.vae is None:
         raise ValueError("--vae is required unless --speed-only is set.")
     vae, _, _, _ = load_vae(args.vae, args.image_size)
-    vae.to(device=device, dtype=dtype)
+    vae.to(device=device)
     vae.eval()
 
     os.makedirs(args.output_dir, exist_ok=True)
@@ -172,14 +216,16 @@ def main():
         batch_indices = indices[start_idx:start_idx + args.batch_size]
         batch_labels_tensor = torch.tensor(batch_labels, device=device, dtype=torch.long)
 
-        latents = lit.sample_latents(
-            batch_labels_tensor,
-            cfg_scale=args.cfg_scale,
-            num_inference_steps=args.num_inference_steps,
-            ardiff_step=args.ardiff_step,
-            base_num_frames=args.base_num_frames,
-        )
-        images = vae.decode(sequence_to_image(latents))
+        with autocast:
+            latents = lit.sample_latents(
+                batch_labels_tensor,
+                cfg_scale=args.cfg_scale,
+                num_inference_steps=args.num_inference_steps,
+                ardiff_step=args.ardiff_step,
+                base_num_frames=args.base_num_frames,
+            )
+        with torch.autocast(device_type=device.type, enabled=False):
+            images = vae.decode(sequence_to_image(latents.float()))
 
         for img, label, idx in zip(images, batch_labels, batch_indices):
             filename = f"{idx:06d}_class{label}.png"

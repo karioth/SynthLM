@@ -39,12 +39,12 @@ For KL16 + 256px images, use `--input-size 16 --latent-size 16`.
 ### 3) Sample
 ```bash
 python sample.py \
-  --checkpoint logs/lightning_transformer_medium_40e/checkpoints/last.ckpt \
+  --checkpoint logs/transformer_medium_40e/checkpoints/last.ckpt \
   --vae pretrained_models/kl16.ckpt \
   --image_size 256 \
   --cfg-scale 3.0 \
   --num_inference_steps 20 \
-  --output_dir visuals
+  --output_dir visuals/visuals_transformer120k
 ```
 Defaults to a fixed class list; use `--num_images` for random classes or `--class_labels 281,282,...` to specify classes.
 
