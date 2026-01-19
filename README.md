@@ -44,7 +44,7 @@ python sample.py \
   --image_size 256 \
   --cfg-scale 3.0 \
   --num_inference_steps 20 \
-  --output_dir visuals
+  --output_dir visuals/visuals_transformer120k
 ```
 Defaults to a fixed class list; use `--num_images` for random classes or `--class_labels 281,282,...` to specify classes.
 
